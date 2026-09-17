@@ -1,0 +1,15 @@
+# CODEOWNERS — B-2
+#
+# The integrator owns CI and repo-wide governance per docs/teams/ownership.yaml
+# (the "shared, non-team paths" block). Team-owned paths are not listed here
+# individually: every team's write list is authoritative in
+# docs/teams/ownership.yaml, and code review for a team's path should route
+# to that team. This file exists only to make GitHub's UI surface the
+# integrator-owned paths so PRs that touch them get an explicit review.
+
+# Integrator-owned (shared / cross-team governance):
+/.github/                    @compilecomp
+/CMakeLists.txt              @compilecomp
+/LICENSE                     @compilecomp
+/README.md                   @compilecomp
+/docs/STATUS.md              @compilecomp

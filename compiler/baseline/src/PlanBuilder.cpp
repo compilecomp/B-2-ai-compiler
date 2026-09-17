@@ -891,15 +891,50 @@ struct ScanState {
 }
 
 // --- step 4: the backedge-poll membership check -------------------------------------
+//
+// Rule 88: "JIT code must include safepoint polls at: loop backedges; ...".
+// The law names the backedge, not a specific position. Two RBC conventions
+// therefore both satisfy it:
+//
+//   (a) the destination of the backward branch IS a safepoint_poll
+//       (poll-at-top-of-loop); the loop header is the poll itself.
+//   (b) the instruction immediately preceding the backward branch IS a
+//       safepoint_poll (poll-at-bottom-of-loop); the poll executes once per
+//       backedge taken, right before the jump.
+//
+// The historical v0 check only accepted (a). Two interpreter-team corpus
+// programs (sum_loop.rbc, fib_loop.rbc in tests/interp/corpus/) follow (b),
+// so they were refused with MissingBackedgePoll and fell back to T0 silently
+// undermining the corpus-differential law in tests/codegen/CorpusTest.cpp
+// ("compiled >= 5" was the only bar). This routine now accepts either form.
+//
+// The check is still a pure membership test against the poll bitset:
+//   - form (a): poll[target] != 0
+//   - form (b): branchPc > 0 AND m.code[branchPc - 1].opcode == SafepointPoll
+// No loop analysis, no IR, no scheduler (Amendment A is preserved).
 
 [[nodiscard]] PlanResult checkBackedgePolls(const rbc::Method& m,
                                             const std::vector<char>& poll) {
-  const auto checkTarget = [&](std::uint32_t branchPc, std::int32_t target) -> bool {
+  const auto isPoll = [&poll](std::int32_t pc32) -> bool {
+    if (pc32 < 0 ||
+        static_cast<std::size_t>(pc32) >= poll.size() ||
+        poll[static_cast<std::size_t>(pc32)] == 0) {
+      return false;
+    }
+    return true;
+  };
+  const auto pollImmediatelyBeforeBranch = [&m](std::uint32_t branchPc) -> bool {
+    if (branchPc == 0) {
+      return false; // nothing preceding the very first instruction
+    }
+    return m.code[branchPc - 1].opcode() == Op::SafepointPoll;
+  };
+  const auto checkTarget = [&](std::uint32_t branchPc,
+                               std::int32_t target) -> bool {
     if (target >= 0 && static_cast<std::uint32_t>(target) < branchPc) {
-      // Backward edge: its destination must be an explicit SafepointPoll
-      // instruction (CompileOptions pin: membership, not loop analysis).
-      if (static_cast<std::size_t>(target) >= poll.size() ||
-          poll[static_cast<std::size_t>(target)] == 0) {
+      // Backward edge: accept form (a) target-is-poll OR form (b)
+      // poll-immediately-before-branch.
+      if (!isPoll(target) && !pollImmediatelyBeforeBranch(branchPc)) {
         return false;
       }
     }
