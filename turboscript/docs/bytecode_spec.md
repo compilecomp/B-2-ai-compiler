@@ -441,6 +441,8 @@ hint)`.
 | Sloppy mode (mapped arguments, with) | Deferred v0.3 -> v0.4: requires frontend-level constructs (with-scope opcode, arguments materialization opcode) that do not exist in TSBC; the Function-level sloppy flag lands with them | Frontend team | v0.4 |
 | GC (heap is arena-owned, non-collecting) | Deferred | GC team | v0.4 |
 | eval / Function constructor | Not representable in v0.2/v0.3 bytecode | Frontend team | v0.4 |
+| String-node arena (BumpArena<StringObj>) | **Implemented v0.7** (benchmarks_v0.6.md register item #2, CLOSED; ts_object.h): the v0.6 `std::deque<StringObj>` → `BumpArena<StringObj>`; cons-string concat is now a pointer bump + placement-new of one 56-byte header instead of a deque emplace. Same never-collected, address-stable ownership contract (Rule 96 + Section 11 divergence row below). | Interp team | done |
+| Slot SBO for Object::slots | **Tried v0.7 — DID NOT MOVE `object_fields`, REVERTED** (benchmarks_v0.6.md register item #1; benchmarks_v0.7.md Section 3): the SBO added 32 bytes of inline storage to every Object and the resulting cache pressure recovered the entire malloc savings (a 1.4% regression on object_fields); the v0.6 `std::vector<Value>` slots is kept. The SlotVec code is sound (16 unit tests pass; 89-corpus sweep green under ASan+UBSan on both dispatch paths); a future revisit must target the cache pressure (smaller inline, tagged-pointer SBO, or a different storage strategy). | Interp team | v0.8 (deferred) |
 
 Every divergence above is tracked, owned, and expiry-dated per Rule 143;
 none silently changes observable semantics of the features that ARE

@@ -246,13 +246,16 @@ class BumpArena {
 // Heap — arena ownership. v0.1 never collects (documented divergence,
 // bytecode_spec.md Section 11); addresses stay valid for the Isolate
 // lifetime. Typed deques give stable element addresses; v0.6: Objects come
-// from a bump arena (BumpArena<Object>, same stability contract).
+// from a bump arena (BumpArena<Object>, same stability contract). v0.7
+// (benchmarks_v0.6.md register item #2, CLOSED): Strings also come from a
+// bump arena — the cons-string concat path no longer pays a deque
+// emplace_back (deque chunk rollover + map bookkeeping) per concat; a
+// concat is now a pointer bump + placement-new of one 56-byte header.
 // ---------------------------------------------------------------------------
 class Heap {
  public:
   [[nodiscard]] StringObj* makeString(std::u16string data) {
-    strings_.emplace_back(std::move(data));
-    return &strings_.back();
+    return strings_.construct(std::move(data));
   }
   // v0.6 cons-string (benchmarks_v0.5.md register #2): a concatenation is
   // one header node referencing its operands; text materializes lazily via
@@ -260,6 +263,8 @@ class Heap {
   // eagerly. Overflow of kMaxStringCodeUnits returns nullptr — call sites
   // raise the RangeError (Rule 74: JS exceptions are values, and the Heap
   // cannot raise).
+  // v0.7 (benchmarks_v0.6.md register item #2, CLOSED): cons nodes allocate
+  // from BumpArena<StringObj> — a pointer bump instead of a deque emplace.
   [[nodiscard]] StringObj* makeCons(StringObj* left, StringObj* right) {
     const uint64_t combined =
         static_cast<uint64_t>(left->length) + static_cast<uint64_t>(right->length);
@@ -271,9 +276,8 @@ class Heap {
       out.append(right->flat());
       return makeString(std::move(out));
     }
-    strings_.emplace_back(StringObj::kCons, left, right,
-                          static_cast<uint32_t>(combined));
-    return &strings_.back();
+    return strings_.construct(StringObj::kCons, left, right,
+                              static_cast<uint32_t>(combined));
   }
   [[nodiscard]] BigInt* makeBigInt(BigInt v) {
     bigints_.push_back(std::move(v));
@@ -308,16 +312,18 @@ class Heap {
   }
 
   [[nodiscard]] uint64_t allocationCount() const {
-    return strings_.size() + bigints_.size() + objects_.constructed() +
+    return strings_.constructed() + bigints_.size() + objects_.constructed() +
            contexts_.size() + closures_.size() + accessors_.size() +
            symbols_.size() + proxies_.size();
   }
 
  private:
-  // Strings: deque (stable addresses; flat nodes carry their payload, cons
-  // nodes are tiny headers). deque<StringObj> remains the owner of every
-  // node, including cons operands (cons links are non-owning).
-  std::deque<StringObj> strings_;
+  // Strings: BumpArena<StringObj> (v0.7, was std::deque<StringObj>). The
+  // arena gives the same never-collected, address-stable ownership contract
+  // the deque did (Rule 96 + bytecode_spec.md Section 11), at a pointer
+  // bump per allocation instead of a deque emplace (the latter pays chunk
+  // rollover + map bookkeeping per concat in string-heavy kernels).
+  BumpArena<StringObj> strings_;
   std::deque<BigInt> bigints_;
   BumpArena<Object> objects_;
   std::deque<Context> contexts_;

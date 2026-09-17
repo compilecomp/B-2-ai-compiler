@@ -1,8 +1,8 @@
 # TurboScript Tier 0 Interpreter Contract
 
-**Status:** Draft v0.6
+**Status:** Draft v0.7
 **Owner:** TurboScript Interp Team
-**Last Updated:** 2026-09-16
+**Last Updated:** 2026-09-18
 **Governing Laws:** `docs/laws/turboscript_compiler_laws.md`
 **Implements:** Part I Tier 0; Rules 4, 6, 7, 8, 9, 16, 23, 26, 32, 41, 47, 52, 58, 60, 72, 74, 83, 90, 96, 114, 119, 120, 124, 143
 

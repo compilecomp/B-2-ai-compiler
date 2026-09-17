@@ -41,8 +41,14 @@ $(BUILD):
 $(BUILD)/tsrun_switch: $(SRCS) $(HDRS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -DTS_NO_COMPUTED_GOTO -o $@ $(SRCS)
 
-# Unit tests (interp_contract.md 8): enterAt reconstruction, both dispatch paths.
+# Unit tests (interp_contract.md 8): enterAt reconstruction, both dispatch
+# paths. v0.7 (benchmarks_v0.6.md register item #2): the BumpArena<StringObj>
+# change gets its own unit pin — the cons operand address-stability contract,
+# the capacity edges (kMinConsLength, kMaxStringCodeUnits overflow), and the
+# long-cons-chain flatten correctness (Rule 34: five regression tests per
+# change; Rule 60: no untested code paths).
 UNIT_SRC := tests/interp/unit_enter_at.cpp
+STRING_ARENA_SRC := tests/interp/unit_string_arena.cpp
 # Driver (tsrun_main) owns main(); unit tests link the library sources only.
 UNIT_LIB_SRCS := $(filter-out $(SRC)/tsrun_main.cpp,$(SRCS))
 $(BUILD)/unit_enter_at: $(UNIT_SRC) $(UNIT_LIB_SRCS) $(HDRS) | $(BUILD)
@@ -51,10 +57,14 @@ $(BUILD)/unit_enter_at: $(UNIT_SRC) $(UNIT_LIB_SRCS) $(HDRS) | $(BUILD)
 $(BUILD)/unit_enter_at_switch: $(UNIT_SRC) $(UNIT_LIB_SRCS) $(HDRS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -I$(SRC) -DTS_NO_COMPUTED_GOTO -o $@ $(UNIT_SRC) $(UNIT_LIB_SRCS)
 
+$(BUILD)/unit_string_arena: $(STRING_ARENA_SRC) $(UNIT_LIB_SRCS) $(HDRS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -I$(SRC) -o $@ $(STRING_ARENA_SRC) $(UNIT_LIB_SRCS)
+
 .PHONY: unit
-unit: $(BUILD)/unit_enter_at $(BUILD)/unit_enter_at_switch
+unit: $(BUILD)/unit_enter_at $(BUILD)/unit_enter_at_switch $(BUILD)/unit_string_arena
 	$(BUILD)/unit_enter_at
 	$(BUILD)/unit_enter_at_switch
+	$(BUILD)/unit_string_arena
 
 POSITIVE := $(wildcard $(CORPUS)/*.tsbc)
 NEGATIVE := $(wildcard $(CORPUS)/*.verr)
