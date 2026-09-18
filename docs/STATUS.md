@@ -2,7 +2,7 @@
 
 **Status:** Living document, integrator-maintained
 **Owner:** B-2 integrator (`.github/`, top-level governance)
-**Last Updated:** 2026-09-17
+**Last Updated:** 2026-09-18
 **Related Sections:** `docs/laws.md`, `docs/teams/ownership.yaml`, `README.md`
 
 This document is the integrator's honest accounting of which parts of the
@@ -23,12 +23,12 @@ The T0 / T1 / frontend / RBC path is real and exercised by `ctest`:
 
 | Subsystem | Path | Status |
 |---|---|---|
-| Frontend (lexer, parser, AST, AST→RBC lowering) | `compiler/frontend/` | v1 landed; `--emit-rbc` closes source→RBC |
+| Frontend (lexer, parser, AST, AST→RBC lowering) | `compiler/frontend/` | v1 landed; `--emit-rbc` closes source→RBC; loop heads emit `safepoint_poll` (form (a) of the baseline contract) |
 | RBC (text format, builder, verifier, opcode table) | `compiler/rbc/` | Spec-conformant; the universal middle-end |
 | IR (sea-of-nodes core: Graph, Verifier, Printer, NodeInfo, Serialize) | `compiler/ir/core/` | v2 core present; consumer-side lowering is partial |
 | Passes (GraphBuilder, GVN, SCCP, Inline, Escape, DCE, Simplify, ControlFlow, PassSupport) | `compiler/passes/` | Pass bodies present and unit-tested; **no T2 execution driver** runs them on a real program |
 | T0 interpreter (`b2run`) | `compiler/interp/` | 125 tests + 19-program corpus, all green |
-| T1 baseline JIT (`b2jit`, copy-and-patch on x86-64) | `compiler/baseline/`, `compiler/codegen/` | 18/19 corpus programs compile to machine code; `fib_loop.rbc` falls back to T0 (no `safepoint_poll` in the corpus file) |
+| T1 baseline JIT (`b2jit`, copy-and-patch on x86-64) | `compiler/baseline/`, `compiler/codegen/` | **19/19 corpus programs compile to machine code** (was 17/19 before `MSG-20260918-001` relaxed the backedge-poll check to accept form (b); was 18/19 before `MSG-20260918-003` added the missing `fib_loop.rbc` poll) |
 | Stencil archive (`tools/stencilgen/`) | `tools/stencilgen/` | Build-time generation; embedded into `b2jit` |
 | Tests | `tests/{frontend,rbc,ir,passes,interp,baseline,codegen}/` | 10/10 ctest targets pass |
 
@@ -75,11 +75,27 @@ must not assume the described behavior is available:
 - `docs/inlining.md` — Inlining v1 (the inline pass is present and unit-tested; the budgets and refusal catalog are exercised in `tests/passes/InlineTests.cpp`).
 - `docs/teams/regalloc-team.md`, `docs/teams/aot-team.md`, `docs/teams/gc-team.md` — team charters for teams with no code.
 
-The integrator-owned `docs/teams/ownership.yaml` references team contract
-docs that do not exist:
-- `docs/baseline_contract.md` (referenced at `baseline_noir.write`)
-- `docs/regalloc_contract.md` (referenced at `regalloc.write`)
-- `docs/aot_contract.md` (referenced at `aot.write`)
+The integrator-owned `docs/teams/ownership.yaml` previously referenced
+team contract docs that did not exist:
+- `docs/baseline_contract.md` (referenced at `baseline_noir.write`) —
+  **landed** as a v1 contract in `MSG-20260918-003`. Describes the
+  stencil plan builder: inputs, the linear-scan algorithm, the budget
+  (kill switch), the output plan, the backedge-poll membership check
+  (Rule 88), refusals, determinism, telemetry, non-guarantees, future
+  obligations.
+- `docs/regalloc_contract.md` (referenced at `regalloc.write`) —
+  **landed** as a v0 stub in `MSG-20260918-003`. Acknowledges no
+  implementation; forward contract for what the regalloc team WILL ship
+  when it ships, with dependencies documented.
+- `docs/aot_contract.md` (referenced at `aot.write`) — **landed** as a
+  v0 stub in `MSG-20260918-003`. Acknowledges no implementation; forward
+  contract for the T2-pipeline-driven offline compiler (Amendment B.5).
+
+The ownership map is now consistent with the tree for the contract doc
+paths. The directory paths (`compiler/regalloc/`, `compiler/aot/`,
+`compiler/gc/`, `compiler/pipeline/`, `runtime/`) are still missing;
+the decision to add v0 stub directories or remove them from the map
+until they ship is tracked in "Recommended next steps" item 2 below.
 
 ---
 
@@ -147,21 +163,28 @@ follow-up.
 
 This list tracks the highest-leverage open work; it is not a roadmap.
 
-1. **Fix `fib_loop.rbc`** — add a `safepoint_poll` at the loop head so the
+1. ~~**Fix `fib_loop.rbc`** — add a `safepoint_poll` at the loop head so the
    backedge check accepts it; this closes the 18/19 → 19/19 corpus gap.
    Belongs to the interpreter team (their corpus file). Tracked as an open
-   BUG message.
+   BUG message.~~ — **CLOSED in `MSG-20260918-003`**; corpus is 19/19.
 2. **Reconcile `docs/teams/ownership.yaml`** with reality: either add
    `compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`,
-   `runtime/` directories with v0 stubs, or remove them from the ownership
-   map until they exist. Either choice is honest; the current state — paths
-   claimed but missing — is not.
-3. **Add the missing contract docs** (`docs/baseline_contract.md`,
+   `runtime/` directories with v0 stubs (an empty `CMakeLists.txt` and a
+   README pointing at the team's contract doc), or remove them from the
+   ownership map until they exist. Either choice is honest; the current
+   state — paths claimed but missing — is not. The team contract docs
+   (`docs/baseline_contract.md`, `docs/regalloc_contract.md`,
+   `docs/aot_contract.md`) are now landed, so the contract doc layer is
+   consistent; the directory layer is still inconsistent.
+3. ~~**Add the missing contract docs** (`docs/baseline_contract.md`,
    `docs/regalloc_contract.md`, `docs/aot_contract.md`) or remove the
-   references from the ownership map.
+   references from the ownership map.~~ — **CLOSED in `MSG-20260918-003`**.
 4. **T2 execution driver** — `compiler/passes/` has the pass bodies; a
    driver that lowers an IR graph to machine code (or to T1 stencil plans)
-   is what unlocks the entire T2 tier.
+   is what unlocks the entire T2 tier. This is also the hard dependency
+   for `compiler/regalloc/` (which cannot ship until the MIR contract
+   exists) and `compiler/aot/` (which cannot ship until the T2 pipeline
+   is wired to a driver).
 5. **Multi-threaded compilation** — `b2jit` is synchronous today. Rules 11
    and 13 require async compilation with a safepoint handshake; this is the
    next big architecture piece after T2 lands.
@@ -186,4 +209,5 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 
 | Date | Change |
 |---|---|
-| 2026-09-17 | Initial STATUS.md created by the integrator; accompanied by `.github/workflows/ci.yml`, `.github/CODEOWNERS`, the backedge-poll relaxation in `compiler/baseline/src/PlanBuilder.cpp`, and the corpus floor update in `tests/baseline/CorpusTest.cpp`. |
+| 2026-09-17 | Initial `STATUS.md` created by the integrator; accompanied by `.github/workflows/ci.yml`, `.github/CODEOWNERS`, the backedge-poll relaxation in `compiler/baseline/src/PlanBuilder.cpp`, and the corpus floor update in `tests/baseline/CorpusTest.cpp`. Corpus sweep moved from 17/19 to 18/19. |
+| 2026-09-18 | `MSG-20260918-003` follow-up: `fib_loop.rbc` now carries a `safepoint_poll` at the loop head (form (a)), closing the corpus to 19/19. `tests/baseline/CorpusTest.cpp` floor `refused >= 1` removed (a refusal is now a regression, not a baseline). Three missing contract docs landed: `docs/baseline_contract.md` (v1), `docs/regalloc_contract.md` (v0 stub), `docs/aot_contract.md` (v0 stub). The path ownership map's contract-doc layer is now consistent with the tree; the directory layer (`compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`, `runtime/`) is still missing. |

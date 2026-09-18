@@ -5,7 +5,7 @@ from: baseline_noir
 to:
   - interpreter
 severity: P3
-status: OPEN
+status: CLOSED
 laws_refs:
   - Rule 88
   - Rule 96
@@ -16,6 +16,7 @@ related_tests:
   - tests/baseline/CorpusTest.cpp
   - tests/codegen/CorpusTest.cpp
 created: 2026-09-18
+closed: 2026-09-18
 ---
 
 ## Summary
@@ -118,15 +119,54 @@ to match.
 
 ## Boundaries
 
-The baseline_noir team will not modify `compiler/interp/`,
+The baseline_noir team did not modify `compiler/interp/`,
 `tests/interp/`, or `docs/interp_contract.md`. The fix to
 `fib_loop.rbc` is the interpreter team's call.
+
+## Resolution
+
+Resolved in the same commit by the integrator (B-2 Architect, wearing
+the interpreter-team hat per the ME-INT precedent — see
+`messages/closed/MSG-20260830-001-interpreter-ir-BUG.md` for the prior
+precedent): a `safepoint_poll` instruction was placed immediately after
+the `Lloop:` label in `tests/interp/corpus/fib_loop.rbc` (form (a) of
+the baseline contract — poll-at-loop-head). This matches the frontend
+lowering convention in `compiler/frontend/src/LowerStmt.cpp`
+(`lowerWhile`, `lowerDoWhile`, `lowerFor` all emit
+`Op::SafepointPoll` immediately after the loop-head label), so
+hand-written corpus programs and `b2parse --emit-rbc` output are
+T1-plannable under the same rule.
+
+Verified end-to-end after the fix:
+
+- `b2run tests/interp/corpus/fib_loop.rbc` produces `610` — matches
+  `fib_loop.rbc.expected` (T0 execution is unaffected; the poll opcode
+  is a no-op in T0 today, only InterpStats counters it).
+- `b2plan tests/interp/corpus/fib_loop.rbc` succeeds: 17 instances
+  planned, 2 stack maps, 2 deopt points.
+- `b2jit tests/interp/corpus/fib_loop.rbc --stats` reports
+  `ok=1 planRefused=0 t0Fallback=0 codeBytes=437`.
+- `ctest --test-dir build --output-on-failure`: 10/10 ctest targets
+  pass.
+- Corpus sweep is now 19/19 (was 18/19 after the backedge-poll
+  relaxation in `MSG-20260918-001`, was 17/19 before that commit).
+
+The `refused >= 1` floor in `tests/baseline/CorpusTest.cpp` was removed
+(its history: floor was 2 in v0, lowered to 1 in
+`MSG-20260918-001`, removed in the same commit that lands this fix —
+`MSG-20260918-003`). A refusal is now a regression, not a baseline; the
+test comment explains how to add a future intentionally-refusing
+fixture with a per-method assertion rather than a global floor.
 
 ## Response
 
 ```text
-status:
-responder:
-date:
-notes:
+status: CLOSED
+responder: B-2 Architect (integrator, wearing the interpreter-team hat)
+date: 2026-09-18
+notes: safepoint_poll placed at the loop head (form (a)) to match the
+       frontend lowering convention; corpus 19/19; all ctest targets green.
+       The poll-before-backedge form (b) was also acceptable per
+       MSG-20260918-001; form (a) was chosen for consistency with
+       b2parse --emit-rbc output.
 ```

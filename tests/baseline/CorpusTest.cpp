@@ -9,19 +9,17 @@
 //                  the documented v0 reality for interpreter-oriented
 //                  corpus programs (nearly every main ends in an
 //                  un-quickened println invoke, whose stencil waits on IC /
-//                  ABI patching; fib_loop has no safepoint_poll at all so its
-//                  backedge is refused under Rule 88).
+//                  ABI patching; loops without safepoint_poll anywhere
+//                  are refused under Rule 88 - all corpus loops now
+//                  carry a poll, see fib_loop.rbc and sum_loop.rbc).
 //                  NEVER UnverifiableMethod (the corpus verifies), NEVER
 //                  BudgetExceeded (defaults are generous), NEVER
 //                  InternalInvariant (a builder bug would fail the suite).
 //
-// Note (post backedge-poll relaxation): the baseline's checkBackedgePolls
-// now accepts BOTH RBC conventions for Rule 88 - poll-at-loop-head (target
-// of the backward branch IS a SafepointPoll) AND poll-before-backedge (the
-// instruction immediately preceding the backward branch IS a SafepointPoll).
-// This made sum_loop.rbc plannable; only fib_loop.rbc remains refused for
-// the poll reason. The refused floor below was lowered from 2 to 1 to match
-// the relaxed contract.
+// Note (post backedge-poll relaxation + fib_loop poll fix): every corpus
+// method now plans cleanly. The refused floor was removed; a future
+// intentionally-refusing fixture (indy/multianewarray holdouts) must add
+// itself with a per-method assertion, not a global floor.
 //
 // Mirrors tests/interp/CorpusTest.cpp's mechanism: the corpus directory is
 // located via the B2_BASELINE_CORPUS_DIR compile definition (an absolute
@@ -203,20 +201,23 @@ B2_TEST(baseline_corpus) {
   }
 
   // Sanity floors (set v2, MSG-20260830-004; relaxed post backedge-poll
-  // fix): the un-quickened invoke*/ldc flip made most corpus methods
-  // plannable. fib_loop.rbc has no safepoint_poll anywhere, so its backedge
-  // is refused under Rule 88 (the only corpus method refused for the poll
-  // reason after the relaxation accepted the poll-before-backedge form).
-  // Floors (not exact pins) so corpus additions do not break the sweep.
+  // fix in MSG-20260918-001; fib_loop.rbc poll landed in MSG-20260918-003
+  // closing the 19/19 corpus). After both fixes, EVERY corpus method plans
+  // cleanly; the refused floor is removed (it was 2, then 1, now 0 by
+  // intent — a refusal is now a regression, not a baseline).
+  //
+  // If a future corpus program intentionally exercises a refusal reason
+  // (e.g. an invokedynamic fixture under NoStencilForOp, or a multianewarray
+  // holdout), add the program AND a comment naming the refusal reason here
+  // AND a per-method assertion (the per-method outcome loop above already
+  // refuses UnverifiableMethod, BudgetExceeded, and InternalInvariant for
+  // any method, including new ones).
   CHECK_MSG(files.size() >= 14,
             "expected at least 14 corpus programs, found " +
                 std::to_string(files.size()));
   CHECK_MSG(plannedOk >= 15,
             "expected at least 15 plannable corpus methods, got " +
                 std::to_string(plannedOk));
-  CHECK_MSG(refused >= 1,
-            "expected at least 1 refused corpus method, got " +
-                std::to_string(refused));
 
   // The known-positive: uncaught.rbc's main plans under the default entry.
   const fs::path uncaught = dir / "uncaught.rbc";

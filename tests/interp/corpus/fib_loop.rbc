@@ -1,6 +1,15 @@
 # Iterative Fibonacci: fib(15) = 610, printed via println(I).
 # Positive corpus file: must parse, verify, and run under T0 with the exact
 # expected stdout (Java semantics oracle, Rule 67).
+#
+# Rule 88 (poll safepoints at loop backedges) is honored by placing a
+# safepoint_poll at the loop head (form (a) of the baseline contract: the
+# destination of the backward goto IS a safepoint_poll). This matches the
+# frontend lowering convention in compiler/frontend/src/LowerStmt.cpp
+# (lowerWhile/lowerDoWhile/lowerFor all emit Op::SafepointPoll immediately
+# after the loop-head label) so that hand-written corpus programs and
+# b2parse --emit-rbc output are T1-plannable under the same rule. See
+# MSG-20260918-002 (now CLOSED) for the audit trail.
 
 .class Main
 
@@ -16,6 +25,7 @@ istore r0 l1
 iconst r0 15
 istore r0 l2
 Lloop:
+safepoint_poll
 iload r0 l2
 ifle r0 Ldone
 iload r0 l0
