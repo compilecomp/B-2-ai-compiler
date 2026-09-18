@@ -49,6 +49,7 @@ if(B2_BUILD_TESTS)
   add_subdirectory(tests/interp)
   add_subdirectory(tests/baseline)
   add_subdirectory(tests/codegen)
+  add_subdirectory(tests/pipeline)
   # v0 stub test directories — no add_test() call today, but the
   # directory exists so the ownership map is consistent.
   add_subdirectory(tests/gc)

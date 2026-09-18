@@ -269,7 +269,7 @@ Good region candidates (Section 4 of the user's design):
 
 ---
 
-## 5. Dirty-node closure (v0 algorithm)
+## 5. Dirty-node closure (v0.1 — forward closure implemented)
 
 When an assumption breaks, the `DependencyIndex::invalidate(dep)`
 returns the direct dependents. The closure algorithm expands
@@ -317,6 +317,66 @@ FrameState / Parent), which is most of what the predicate needs.
 The closure is bounded by the dirty-region size limit
 (`max_dirty_region_size`, Section 19); if the closure exceeds the
 limit, the system escalates to full method deopt (Section 10).
+
+### v0.1 implementation status
+
+**Status: v0.1 — forward closure implemented; backward closure
+open work.** The v0.1 implementation landed in
+`MSG-20260918-008` (`compiler/pipeline/src/DirtyClosure.cpp` +
+`include/b2/pipeline/DirtyClosure.h`). The forward closure
+walks def-use chains through:
+
+- `InputRole::Data` — pure value nodes' operands propagate dirty
+  (a value node's value depends on its operand's value).
+- `InputRole::Mem` — memory-state predecessors propagate dirty
+  (the memory chain must be rebuilt if any producer's speculation
+  breaks).
+- `InputRole::FrameState` — deopt state propagates dirty (the
+  FrameState's locals are the deopt reconstruction; if the
+  producer's speculation breaks, the deopt state is invalidated).
+- `InputRole::Parent` — projection sources propagate dirty
+  (IfTrue/IfFalse of an If; SwitchCase of a Switch; CallExcept of
+  a Call*. The projection's behavior is determined by its Parent).
+
+The closure does NOT propagate through `InputRole::Ctrl` (control
+predecessors don't carry data semantics; the control token already
+flowed) or `InputRole::None` (placeholder / unused slots).
+
+Side-effecting users (`NodeClass::Call`, `NodeClass::Memory` with
+non-`Pure` effect, `NodeClass::Guard`) ALWAYS propagate dirty
+regardless of the input slot's role — the side effect may observe
+the producer's value or speculation (Section 13: "If a dirty region
+contains calls/stores/allocations, be conservative").
+
+The `semanticsDependOn` predicate is exposed in the header
+(`include/b2/pipeline/DirtyClosure.h`) for unit tests + the v0 → v1
+transition's relaxation (the v1 may make the predicate less
+conservative once the side-effect closure is trusted).
+
+The budget cap (`max_size`) is enforced: if the closure exceeds the
+limit, the algorithm sets `DirtyClosureResult::budget_exceeded = true`
+and stops. The caller checks the flag and escalates to full method
+deopt (Section 10).
+
+The backward closure (region expansion through boundary nodes)
+requires region tracking, which doesn't exist yet (the v0 contract
+surfaces for `Region` landed in `MSG-20260918-007`; the region
+BUILDER is the v0 → v1 transition's work). The v0.1 returns the
+forward closure; the v0 → v1 transition adds the backward closure
+when the region builder lands.
+
+The v0.1 is unit-tested in `tests/pipeline/DirtyClosureTests.cpp`
+(12 tests: empty seed, seed dedup, dead-seed drop, Data/Mem/Parent
+propagation, Ctrl no-propagation, side-effecting-user rule, budget
+cap, determinism, the `semanticsDependOn` predicate). The tests
+construct minimal IR graphs by hand (the same approach as
+`tests/ir/`).
+
+DETERMINISM (Rule 124): the algorithm is deterministic — the
+iteration is in the graph's node-id order (the IR's `nodes_` vector
+is creation-order, stable for the graph's lifetime, Rule 7), and
+the membership set is a sorted vector for stable O(log n)
+membership + O(1) amortized append.
 
 ---
 
