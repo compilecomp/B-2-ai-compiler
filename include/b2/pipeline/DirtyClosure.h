@@ -36,9 +36,38 @@
 
 namespace b2::pipeline {
 
-// The default max dirty closure size (Section 19 of the contract;
-// `PartialDeoptConfig::max_dirty_region_size`). If the closure
-// exceeds this, the caller escalates to full method deopt.
+// The default max dirty closure size (Section 19 of the contract).
+// If the closure exceeds this, the caller escalates to full method
+// deopt (Section 10 fallback).
+//
+// RATIONALE for the default value of 64:
+//   - 64 IR nodes is roughly the size of a hot loop body or a small
+//     inlined callee — the natural unit of partial recompilation
+//     (Section 4 of the contract: "good region candidates"). A
+//     closure that stays under 64 covers the common salvage cases
+//     (a single failed type profile, a single broken inline, a
+//     single invalidated load); a closure that exceeds 64 is
+//     likely covering multiple unrelated speculation failures and
+//     is no longer "the smallest safe region" — escalate.
+//   - 64 is small enough that the partial rebuild's compile cost
+//     (lowering + verifying + activating ~64 IR nodes) is bounded
+//     by the deopt-to-reopt latency budget (Section 22 telemetry's
+//     `deopt_to_reopt_latency_ms`). At ~64 nodes, the rebuild is
+//     ~1-3 ms on commodity hardware; above that, the latency grows
+//     non-linearly (the verifier's O(n^2) checks dominate).
+//   - 64 is large enough that the closure doesn't trivially
+//     over-escalate on real Java methods. The interp corpus's
+//     largest single-method graph is ~50 nodes today (see
+//     `tests/interp/corpus/`); 64 leaves headroom for the larger
+//     methods the frontend will lower once the Java stdlib lands
+//     (`docs/STATUS.md` item 7).
+//
+// The default is overridable at runtime via
+// `PartialDeoptConfig::max_dirty_region_size` (the runtime config
+// passed to `onGuardFailure()`); the algorithm itself takes
+// `max_size` as a parameter. The single source of truth for the
+// DEFAULT is this constant; `PartialDeoptConfig::max_dirty_region_size`
+// defaults to it (no duplicate literal).
 inline constexpr std::uint32_t kDefaultMaxDirtyRegionSize = 64;
 
 // The closure result: the expanded dirty set + whether the size budget

@@ -26,6 +26,7 @@
 #include "b2/ir/Graph.h"
 #include "b2/ir/Node.h"
 #include "b2/pipeline/DependencyIndex.h"
+#include "b2/pipeline/DirtyClosure.h"  // IWYU pragma: keep (kDefaultMaxDirtyRegionSize)
 #include "b2/pipeline/Region.h"
 
 namespace b2::codegen { struct CompiledCode; }
@@ -42,8 +43,33 @@ struct PartialDeoptConfig {
   bool enable_partial_inline_recompile   = false;  // requires ICDG boundary (Section 16)
   bool allow_region_patching             = false;  // requires safepoint handshake (Section 17)
 
-  std::uint32_t partial_deopt_budget     = 3;       // per-method, per-window
-  std::uint32_t max_dirty_region_size    = 64;      // nodes; escalate above
+  // Per-method, per-window deopt count budget (Section 19: deopt
+  // budget and hysteresis). If a method triggers more than this
+  // many deopts in the rolling window, the throttling policy
+  // disables partial deopt for the method (the next invocation
+  // goes straight to T1 baseline).
+  //
+  // RATIONALE for the default of 3:
+  //   - 1 deopt is normal (the first speculation break for a
+  //     method is expected; the recompile adapts).
+  //   - 2 deopts is suspicious (the recompile may have picked a
+  //     bad speculation; the throttling policy should consider
+  //     downgrading).
+  //   - 3 deopts is the action threshold (the recompile is
+  //     thrashing; stop attempting partial deopt for this method
+  //     until the window resets).
+  //   - The window size is not configurable at v0; the v0 -> v1
+  //     transition adds `deopt_window_ms` based on telemetry.
+  std::uint32_t partial_deopt_budget     = 3;
+
+  // Max IR nodes in the dirty closure before the algorithm escalates
+  // to full method deopt (Section 19). Defaults to
+  // `kDefaultMaxDirtyRegionSize` (single source of truth; the
+  // rationale for the value 64 is documented at the constant's
+  // declaration in `b2/pipeline/DirtyClosure.h`). Override at
+  // runtime via this field; the algorithm takes `max_size` as a
+  // parameter at the call site (no global state, Rule 125).
+  std::uint32_t max_dirty_region_size    = kDefaultMaxDirtyRegionSize;
 
   // Verification level: "always" (debug), "sampled" (release).
   // The v0 default is "always" (the IR verifier runs on every

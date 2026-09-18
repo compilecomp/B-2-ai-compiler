@@ -34,6 +34,7 @@
 #include "b2/ir/Node.h"
 #include "b2/pipeline/DependencyIndex.h"
 #include "b2/pipeline/DirtyClosure.h"
+#include "b2/pipeline/PartialDeopt.h"
 
 namespace {
 
@@ -265,4 +266,43 @@ B2_TEST(pipeline_dirty_closure_semantics_depend_on_side_effecting) {
               ("StoreField should propagate dirty from all input slots; "
                "failed for slot=" + std::to_string(slot)).c_str());
   }
+}
+
+B2_TEST(pipeline_dirty_closure_default_budget_single_source_of_truth) {
+  // Drift guard: PartialDeoptConfig::max_dirty_region_size must default
+  // to kDefaultMaxDirtyRegionSize. The two are defined in different headers
+  // (DirtyClosure.h has the constant; PartialDeopt.h has the config field);
+  // this test catches the case where someone changes one without the other.
+  // See MSG-20260918-009 for the rationale.
+  b2::pipeline::PartialDeoptConfig cfg;
+  CHECK(cfg.max_dirty_region_size == b2::pipeline::kDefaultMaxDirtyRegionSize);
+  // Sanity: the constant is documented as 64 (rationale at its declaration).
+  // If the rationale ever changes the default, this assertion must be
+  // updated to match (and the rationale comment with it).
+  CHECK(b2::pipeline::kDefaultMaxDirtyRegionSize == 64);
+}
+
+B2_TEST(pipeline_dirty_closure_runtime_override_of_default_budget) {
+  // Runtime override: PartialDeoptConfig::max_dirty_region_size is
+  // overridable. The algorithm takes max_size as a parameter; the engine
+  // (in the v0 -> v1 transition) passes cfg.max_dirty_region_size down.
+  // This test verifies the override path works (no hard-coded literal
+  // inside the algorithm).
+  b2::ir::Graph g;
+  const auto ids = makeDataChainGraph(g);
+  b2::pipeline::PartialDeoptConfig cfg;
+  // Override the default: a tiny budget that fires immediately.
+  cfg.max_dirty_region_size = 1;
+  b2::pipeline::DirtySet seeds;
+  seeds.nodes.push_back(ids.c1);
+  const auto result = b2::pipeline::expandDirtyClosure(
+      g, std::move(seeds), cfg.max_dirty_region_size);
+  CHECK(result.budget_exceeded);
+  // And a larger budget that does NOT fire for this small graph.
+  b2::pipeline::DirtySet seeds2;
+  seeds2.nodes.push_back(ids.c1);
+  cfg.max_dirty_region_size = 1024;
+  const auto result2 = b2::pipeline::expandDirtyClosure(
+      g, std::move(seeds2), cfg.max_dirty_region_size);
+  CHECK(!result2.budget_exceeded);
 }

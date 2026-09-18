@@ -884,6 +884,44 @@ The thresholds are feature flags (Section 21). The v0 default is
 conservative; the v0 → v1 transition tunes them based on
 telemetry.
 
+### v0.1 budget constants — single source of truth
+
+The budget thresholds are NOT hard-coded magic numbers duplicated
+across headers. The contract surfaces use a single source of truth:
+
+- `kDefaultMaxDirtyRegionSize` (in `include/b2/pipeline/
+  DirtyClosure.h`) — the default max IR nodes in the dirty closure
+  before the algorithm escalates to full method deopt. The default
+  value (64) has a documented rationale (at the constant's
+  declaration): 64 IR nodes is roughly the size of a hot loop body
+  or a small inlined callee, small enough that the partial rebuild
+  is ~1-3 ms (the deopt-to-reopt latency budget, Section 22),
+  large enough to cover the common salvage cases without trivially
+  over-escalating on real Java methods.
+- `PartialDeoptConfig::max_dirty_region_size` (in
+  `include/b2/pipeline/PartialDeopt.h`) — the runtime config field,
+  defaults to `kDefaultMaxDirtyRegionSize` (NOT to a duplicate
+  literal). Override at runtime via this field; the algorithm
+  (`expandDirtyClosure(g, seeds, max_size)`) takes the value as a
+  parameter (no global state, Rule 125).
+- `PartialDeoptConfig::partial_deopt_budget` — the per-method, per-
+  window deopt count budget (default 3). The rationale is at the
+  field's declaration: 1 deopt is normal, 2 is suspicious, 3 is the
+  action threshold (the recompile is thrashing; stop attempting
+  partial deopt for the method until the window resets).
+
+The drift guard: `tests/pipeline/DirtyClosureTests.cpp`'s
+`pipeline_dirty_closure_default_budget_single_source_of_truth` test
+asserts `PartialDeoptConfig::max_dirty_region_size ==
+kDefaultMaxDirtyRegionSize` (catches the case where someone
+changes one without the other). The runtime-override test
+`pipeline_dirty_closure_runtime_override_of_default_budget`
+verifies the algorithm takes the parameter at the call site (no
+hard-coded literal inside the algorithm).
+
+The window size (`deopt_window_ms`) is NOT configurable at v0.1;
+the v0 → v1 transition adds it based on telemetry.
+
 ---
 
 ## 20. Verification gates (Rule 40 form)
@@ -932,15 +970,21 @@ Optimized path:
   otherwise full deopt (the v0 path)
 ```
 
-Feature flags (the v0 default is conservative):
+Feature flags (the v0 default is conservative; the defaults
+documented at each field's declaration in
+`include/b2/pipeline/PartialDeopt.h`, with rationales — see
+Section 19 for the budget constants' single source of truth):
 
 ```text
 enable_partial_deopt              = false (v0 default; opt-in)
 enable_partial_loop_recompile     = false (requires OSR; Section 15)
 enable_partial_inline_recompile   = false (requires ICDG boundary; Section 16)
 allow_region_patching             = false (requires safepoint handshake; Section 17)
-partial_deopt_budget              = 3 (per-method, per-window)
-max_dirty_region_size             = 64 (nodes; escalate above)
+partial_deopt_budget              = 3 (per-method, per-window; rationale at field)
+max_dirty_region_size             = kDefaultMaxDirtyRegionSize (64; rationale at
+                                   the constant's declaration in DirtyClosure.h;
+                                   PartialDeoptConfig defaults to the constant,
+                                   not a duplicate literal)
 verification_level                = "always" (debug) / "sampled" (release)
 ```
 
