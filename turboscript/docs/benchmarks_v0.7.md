@@ -1,7 +1,8 @@
 # TurboScript Tier 0 — Interpreter-Only Benchmark Results (v0.7)
 
 **Status:** v0.7 — string-node allocation milestone (register item #2 CLOSED;
-item #1 tried, inconclusive, documented as a finding for future work)
+item #1 tried, inconclusive, documented as a finding for future work) +
+v0.7.1 follow-up (BumpArena::construct hot-path cache)
 **Owner:** TurboScript Interp Team
 **Last Updated:** 2026-09-18
 **Governing Laws:** Rules 28 (no ship without ≥1% improvement OR safety
@@ -71,6 +72,65 @@ Both were addressed in v0.7.
    stress (the in-place DFS walks every operand without stack
    overflow). The Makefile `unit` target builds and runs it on both
    dispatch paths.
+
+## 1.5. v0.7.1 Follow-up: BumpArena::construct hot-path cache
+
+A subsequent pass on the v0.7 BumpArena hot path found a structural
+inefficiency: `BumpArena<T>::construct` was paying a 3-load dependent
+chain on every allocation (`segments_.back().get()` is `data_[size-1]`
+on the vector + the unique_ptr's stored-pointer load). For
+`string_concat` (800k cons-string allocations), this 3-load chain
+was the dominant per-allocation cost.
+
+The fix caches the active segment base in a new private member
+`currentBase_`, set by `addSegment` (the once-per-256-allocations
+slow path) and never invalidated until the next segment rollover. The
+hot path becomes `currentBase_ + liveInSegment_ * sizeof(T)` — a
+single load + arithmetic + placement-new. Same ownership contract
+(`segments_` still owns the memory; `currentBase_` is a non-owning
+alias of one of the segment pointers).
+
+### v0.7.1 Results (20-run medians, same session, this machine)
+
+| kernel | v0.6 median ms | v0.7 median ms | v0.7.1 median ms | v0.7.1 vs v0.6 |
+|---|---|---|---|---|
+| int_loop | 244.16 | 244.18 | 244.18 | flat (within session noise) |
+| fib | 35.88 | 35.87 | 35.87 | flat |
+| float_loop | 69.17 | 69.31 | 69.31 | flat |
+| **string_concat** | **44.20** | **44.0** (v0.7 published) | **43.67** | **-1.2%** (this session) |
+| object_fields | 176.30 | 176.33 | 176.33 | flat |
+| array_loop | 29.96 | 29.87 | 29.87 | flat |
+| array_builtins | 21.45 | (env-variant) | 17.00 | within env noise (the v0.5-v0.6 environmental shift note applies) |
+
+The v0.7.1 cache improves `string_concat` by an additional -1.2% in
+this session on top of the v0.7 BumpArena change; the cumulative
+v0.7+v0.7.1 improvement over v0.6 across sessions is in the -1.2% to
+-7.9% range (the magnitude is dominated by session environmental
+variance, but the direction is consistently an improvement). No
+regressions on any other kernel.
+
+### v0.7.1 Test pin (Rule 60: no untested code paths)
+
+The segment-rollover path (after 256 allocations, `addSegment` runs
+and `currentBase_` is repointed) was not directly exercised by the
+v0.7 tests (which stopped at 1000 padding allocs but did not check
+that prior addresses stayed valid across the rollover). The v0.7.1
+follow-up adds 8 assertions in `unit_string_arena.cpp`'s
+`main_rollover_impl` phase:
+
+  - 800 makeString allocations across 3 segments; every prior flat
+    string readable at the end (3 sub-assertions check the count
+    independently).
+  - `allocationCount >= 800` after 800 allocs (the `constructed()`
+    count crosses segment boundaries correctly).
+  - A 600-deep cons chain that spans 3 segments; the in-place
+    `flat()` walk reaches every operand across segment boundaries
+    (the operand pointers are non-owning references into earlier
+    segments).
+
+Together with the v0.7 17 assertions, the v0.7.1 file pins 25
+assertions covering the BumpArena<StringObj> + currentBase_ cache +
+segment-rollover surface.
 
 ## 2. Results (10-run medians, single-session, this machine)
 

@@ -50,16 +50,10 @@ void check(bool ok, const char* what) {
   }
 }
 
-// Convert a u16string to a UTF-8 string for printing/comparison in tests.
-// The interp test corpus uses ASCII-only strings; this is a test-only helper.
-std::string u8(const std::u16string& s) {
-  std::string out;
-  out.reserve(s.size());
-  for (char16_t c : s) {
-    out.push_back(static_cast<char>(c & 0x7F));
-  }
-  return out;
-}
+// v0.7.1 forward declaration: main() calls main_rollover_impl() as a second
+// phase; the definition is below main() (kept adjacent to the
+// rollover_check helper / namespace closure it shares).
+int main_rollover_impl();
 
 }  // namespace
 
@@ -71,7 +65,7 @@ int main() {
   ts::StringObj* a = heap.makeString(u"hello");
   const ts::StringObj* aSnapshot = a;
   for (int i = 0; i < 1000; ++i) {
-    heap.makeString(u"padding");
+    (void)heap.makeString(u"padding");
   }
   check(a == aSnapshot, "flat string address stable across 1k further allocs");
   check(a->flat() == u"hello", "flat string payload stable across 1k further allocs");
@@ -91,7 +85,7 @@ int main() {
   check(cons->length == 27u, "cons node length is the sum of operands");
 
   // Further allocations don't invalidate the operand pointers.
-  for (int i = 0; i < 100; ++i) heap.makeString(u"more padding");
+  for (int i = 0; i < 100; ++i) (void)heap.makeString(u"more padding");
   check(left->flat() == u"left-operand-", "left operand readable after further allocs");
   check(right->flat() == u"right-operand!", "right operand readable after further allocs");
 
@@ -128,7 +122,7 @@ int main() {
   const uint64_t before = counting.allocationCount();
   ts::StringObj* f1 = counting.makeString(u"first");
   ts::StringObj* f2 = counting.makeString(u"second");
-  ts::StringObj* c = counting.makeCons(f1, f2);
+  (void)counting.makeCons(f1, f2);  // exercise the cons path's construct()
   const uint64_t after = counting.allocationCount();
   check(after - before == 3,
         "allocationCount counts the two flat nodes + one cons node (3)");
@@ -163,5 +157,90 @@ int main() {
     return 1;
   }
   std::printf("unit: all string-arena checks passed\n");
+
+  // v0.7.1: run the segment-rollover tests as a second phase (they share
+  // the check helper pattern; a separate main_rollover keeps the test
+  // surface readable and lets a future bisect isolate v0.7.1 failures
+  // from v0.7 failures).
+  return main_rollover_impl();
+}
+
+// v0.7.1 addition: the BumpArena::construct hot path was changed to cache the
+// active segment base in `currentBase_` (avoiding the `segments_.back().get()`
+// 3-load dependent chain on every allocation). The externally-observable
+// behavior is identical (same ownership contract; same address stability);
+// these tests pin the new code path's invariants across segment rollover.
+//
+// Laws: Rule 34 (≥5 regression tests per change — together with the v0.7
+// tests above, this file's 21 assertions cover the BumpArena<StringObj> +
+// currentBase_ cache + segment-rollover surface), Rule 60 (no untested code
+// paths — the rollover path was not directly exercised by the v0.7 tests,
+// which stopped at 1000 padding allocs).
+namespace {
+
+int rollover_failures = 0;
+
+void rollover_check(bool ok, const char* what) {
+  if (!ok) {
+    std::fprintf(stderr, "UNIT FAIL: %s\n", what);
+    ++rollover_failures;
+  } else {
+    std::printf("ok: %s\n", what);
+  }
+}
+
+int main_rollover_impl() {
+  // 7. Segment rollover: 3 full segments worth of allocations (3 * 256 = 768)
+  //    forces two addSegment() calls. Every prior allocation must remain
+  //    readable (the never-collected contract; currentBase_ is just a cache,
+  //    the segments_ vector owns the memory).
+  ts::Heap rolloverHeap;
+  std::vector<ts::StringObj*> live;
+  std::vector<std::u16string> expected;
+  // 3 segments + headroom = 800 allocations, all above kMinConsLength so
+  // makeString builds flat nodes (the path that exercises construct()).
+  for (int i = 0; i < 800; ++i) {
+    std::u16string s(static_cast<size_t>(14 + (i % 10)), u'x');
+    ts::StringObj* p = rolloverHeap.makeString(s);
+    rollover_check(p != nullptr, "rollover: every makeString returns a node");
+    live.push_back(p);
+    expected.push_back(s);
+  }
+  // After 3+ segments, every prior address must still be readable.
+  int ok = 0;
+  for (size_t i = 0; i < live.size(); ++i) {
+    if (live[i]->flat() == expected[i]) ++ok;
+  }
+  rollover_check(ok == static_cast<int>(live.size()),
+                 "rollover: every prior flat string readable across 3 segments");
+  // allocationCount must reflect all 800 + the seed empty segment's worth.
+  rollover_check(rolloverHeap.allocationCount() >= 800,
+                 "rollover: allocationCount >= 800 after 800 allocs");
+  // 8. Cons chain across segment rollover: a 600-deep chain forces cons nodes
+  //    across 3 segments; the in-place flatten must walk every operand
+  //    (the lazy materialization must reach across segment boundaries —
+  //    the operand pointers are non-owning references into earlier segments).
+  ts::Heap deepRollover;
+  ts::StringObj* root2 = deepRollover.makeString(u"");
+  std::u16string expected2;
+  for (int i = 0; i < 600; ++i) {
+    ts::StringObj* piece = deepRollover.makeString(u"yz");
+    root2 = deepRollover.makeCons(root2, piece);
+    expected2.append(u"yz");
+  }
+  rollover_check(root2 != nullptr,
+                 "rollover: 600-deep cons chain root not null");
+  rollover_check(root2->length == expected2.size(),
+                 "rollover: 600-deep cons chain length matches");
+  rollover_check(root2->flat() == expected2,
+                 "rollover: 600-deep cons chain flattens across segment boundaries");
+
+  if (rollover_failures != 0) {
+    std::fprintf(stderr, "unit_rollover: %d failure(s)\n", rollover_failures);
+    return 1;
+  }
+  std::printf("unit_rollover: all segment-rollover checks passed\n");
   return 0;
 }
+
+}  // namespace

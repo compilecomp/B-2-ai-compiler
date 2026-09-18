@@ -190,6 +190,17 @@ struct Object {
 // is ever collected and element addresses are stable for the Isolate
 // lifetime (bytecode_spec.md Section 11). Allocation is a pointer bump plus
 // placement-new; segments are chained unique_ptrs so elements never move.
+//
+// v0.7.1 (benchmarks_v0.7.md follow-up): the per-construct hot path was
+// `segments_.back().get() + liveInSegment_ * sizeof(T)`. `segments_.back()`
+// is `data_[size-1]` (a vector index + size lookup), and `.get()` is a
+// unique_ptr dereference — together a 3-load dependent chain paid on EVERY
+// allocation. The current segment base is now cached in `currentBase_` and
+// updated only on `addSegment` (the once-per-256-allocations slow path).
+// The hot path is now: `currentBase_ + liveInSegment_ * sizeof(T)` — a
+// single load + arithmetic. Same ownership contract (segments_ still owns
+// the memory; currentBase_ aliases one of them); the cache is a private
+// member so the destructor's `segments_[s]` walk is unchanged.
 // ---------------------------------------------------------------------------
 template <typename T>
 class BumpArena {
@@ -218,7 +229,11 @@ class BumpArena {
   template <typename... Args>
   [[nodiscard]] T* construct(Args&&... args) {
     if (liveInSegment_ == kPerSegment) addSegment();
-    T* p = reinterpret_cast<T*>(segments_.back().get() +
+    // v0.7.1: currentBase_ aliases the active segment's data pointer (set
+    // by addSegment and updated only on segment rollover). The hot path
+    // is one load + arithmetic + placement-new — no vector back() lookup,
+    // no unique_ptr dereference per allocation.
+    T* p = reinterpret_cast<T*>(currentBase_ +
                                 liveInSegment_ * sizeof(T));
     new (p) T(std::forward<Args>(args)...);
     ++liveInSegment_;
@@ -234,11 +249,15 @@ class BumpArena {
   void addSegment() {
     // std::byte arrays from default new[] carry max_align_t alignment
     // (>= alignof(Object)); pinned below (Rule 105 discipline).
-    segments_.push_back(std::unique_ptr<std::byte[]>(
-        new std::byte[sizeof(T) * kPerSegment]));
+    auto seg = std::unique_ptr<std::byte[]>(
+        new std::byte[sizeof(T) * kPerSegment]);
+    currentBase_ = seg.get();
+    segments_.push_back(std::move(seg));
     liveInSegment_ = 0;
   }
   std::vector<std::unique_ptr<std::byte[]>> segments_;
+  std::byte* currentBase_ = nullptr;  // aliases segments_.back().get() —
+                                       // cached hot-path pointer (v0.7.1).
   size_t liveInSegment_ = 0;
 };
 
