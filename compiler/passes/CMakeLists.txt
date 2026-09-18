@@ -36,4 +36,10 @@ if(B2_BUILD_TOOLS)
   add_executable(b2graph tools/b2graph.cpp)
   target_link_libraries(b2graph PRIVATE b2::passes b2::ir b2::rbc b2::interp b2::codegen)
   target_compile_features(b2graph PRIVATE cxx_std_26)
+
+  # Debug tool for the T2 driver work (MSG-20260918-005). Temporary; will be
+  # removed when the T2 driver is wiring-complete.
+  add_executable(b2t2debug tools/b2t2debug.cpp)
+  target_link_libraries(b2t2debug PRIVATE b2::passes b2::ir b2::rbc b2::interp b2::codegen)
+  target_compile_features(b2t2debug PRIVATE cxx_std_26)
 endif()

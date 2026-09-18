@@ -9,9 +9,10 @@ add_executable(b2_codegen_tests
   TestMain.cpp
   CodeGenTests.cpp
   CorpusTest.cpp
+  T2CorpusTest.cpp
 )
 
-target_link_libraries(b2_codegen_tests PRIVATE b2::codegen b2::frontend)
+target_link_libraries(b2_codegen_tests PRIVATE b2::codegen b2::passes b2::ir b2::interp b2::rbc b2::frontend)
 target_compile_features(b2_codegen_tests PRIVATE cxx_std_26)
 
 target_compile_definitions(b2_codegen_tests PRIVATE

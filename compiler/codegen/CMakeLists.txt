@@ -68,4 +68,18 @@ if(B2_BUILD_TOOLS)
   target_link_libraries(b2jit PRIVATE b2::codegen)
   target_compile_features(b2jit PRIVATE cxx_std_26)
   set_target_properties(b2jit PROPERTIES CXX_EXTENSIONS OFF)
+
+  # b2t2: the T2 execution driver (MSG-20260918-005). Mirrors b2jit's role
+  # for T2: parse + verify + build IR + (opt) lower + install + execute.
+  # Shares the T2 lowering (codegen::lowerOnly) with b2graph --exec, but the
+  # surface is tuned for execution + stats + differential safety (Rule 36
+  # form: b2t2 == b2run byte-identical in the default no-opt configuration).
+  # Links the same libraries b2jit links plus b2::passes (the T2 pipeline:
+  # buildGraph + runEarlyCleanup + runInlining + runPartialEscapeAnalysis)
+  # and b2::ir (the verifier the driver runs between passes per Rule 40).
+  add_executable(b2t2 tools/b2t2.cpp)
+  target_link_libraries(b2t2 PRIVATE b2::codegen b2::passes b2::ir b2::interp b2::rbc)
+  target_include_directories(b2t2 PRIVATE ${CMAKE_SOURCE_DIR}/compiler/passes/tools)
+  target_compile_features(b2t2 PRIVATE cxx_std_26)
+  set_target_properties(b2t2 PROPERTIES CXX_EXTENSIONS OFF)
 endif()

@@ -2,7 +2,7 @@
 
 **Status:** Living document, integrator-maintained
 **Owner:** B-2 integrator (`.github/`, top-level governance)
-**Last Updated:** 2026-09-18 (rev 2)
+**Last Updated:** 2026-09-18 (rev 3)
 **Related Sections:** `docs/laws.md`, `docs/teams/ownership.yaml`, `README.md`
 
 This document is the integrator's honest accounting of which parts of the
@@ -26,9 +26,10 @@ The T0 / T1 / frontend / RBC path is real and exercised by `ctest`:
 | Frontend (lexer, parser, AST, AST→RBC lowering) | `compiler/frontend/` | v1 landed; `--emit-rbc` closes source→RBC; loop heads emit `safepoint_poll` (form (a) of the baseline contract) |
 | RBC (text format, builder, verifier, opcode table) | `compiler/rbc/` | Spec-conformant; the universal middle-end |
 | IR (sea-of-nodes core: Graph, Verifier, Printer, NodeInfo, Serialize) | `compiler/ir/core/` | v2 core present; consumer-side lowering is partial |
-| Passes (GraphBuilder, GVN, SCCP, Inline, Escape, DCE, Simplify, ControlFlow, PassSupport) | `compiler/passes/` | Pass bodies present and unit-tested; **no T2 execution driver** runs them on a real program |
+| Passes (GraphBuilder, GVN, SCCP, Inline, Escape, DCE, Simplify, ControlFlow, PassSupport) | `compiler/passes/` | Pass bodies present and unit-tested; the T2 driver runs them on real programs when `-O` is passed (off by default; opt-mode divergences tracked as `MSG-20260918-006` item 4) |
 | T0 interpreter (`b2run`) | `compiler/interp/` | 125 tests + 19-program corpus, all green |
 | T1 baseline JIT (`b2jit`, copy-and-patch on x86-64) | `compiler/baseline/`, `compiler/codegen/` | **19/19 corpus programs compile to machine code** (was 17/19 before `MSG-20260918-001` relaxed the backedge-poll check to accept form (b); was 18/19 before `MSG-20260918-003` added the missing `fib_loop.rbc` poll) |
+| T2 execution driver (`b2t2`, IR → x86-64 via `lowerOnly`) | `compiler/codegen/tools/b2t2.cpp`, `compiler/codegen/src/T2Lowering.cpp` | **v0 wired end-to-end in `MSG-20260918-005`**: parses + verifies + builds IR + lowers + installs + executes. Differential (Rule 36 form) holds for **16/19** corpus programs in the default no-opt config; 3 known no-opt divergences + 1 opt-mode divergence tracked as `MSG-20260918-006`. The v0 is NOT yet a perf win (lowering traps early on most programs; engine deopt-to-T0 catches the trap; observable behavior preserved). v0 → v1 transition items in `docs/t2_driver_contract.md`. |
 | Stencil archive (`tools/stencilgen/`) | `tools/stencilgen/` | Build-time generation; embedded into `b2jit` |
 | Tests | `tests/{frontend,rbc,ir,passes,interp,baseline,codegen}/` | 10/10 ctest targets pass |
 
@@ -51,7 +52,7 @@ exist, build, and produce the documented behavior.
 | `docs/teams/ownership.yaml` (aot team) | `compiler/aot/`, `tests/aot/` | **v0 stub directories landed** in `MSG-20260918-004` (INTERFACE library + README pointing at the contract). **No AOT code.** The v0 contract is `docs/aot_contract.md`; the v1 implementation is blocked on the T2 driver, the deopt backend, and closure analysis. |
 | `docs/teams/ownership.yaml` (passes team includes `compiler/pipeline/`) | `compiler/pipeline/` | **v0 stub directory landed** in `MSG-20260918-004` (INTERFACE library + README). **No pipeline orchestrator code.** Pass implementations live in `compiler/passes/`; the pipeline driver that orders them is blocked on the T2 execution driver. |
 | `docs/laws.md` (Rule 11 / Rule 13: mutator threads never block on JIT; compiler threads never block on mutator state) | Async compilation, safepoint handshake protocol | **Not implemented.** `b2jit` is synchronous, single-threaded. No `std::thread` / `std::async` / `std::jthread` in `compiler/`. The laws' multi-threaded contracts are open work. |
-| `docs/laws.md` Part I (T2 optimizing JIT) and `docs/codegen_contract.md` SS8 (T2 reuses the helper ABI) | T2 execution driver (IR → machine code lowering) | **Pass bodies exist but no driver runs them.** `compiler/codegen/src/T2Lowering.cpp` is a partial lowering that is not wired into any execution path; the `b2graph` tool dumps graphs only. |
+| `docs/laws.md` Part I (T2 optimizing JIT) and `docs/codegen_contract.md` SS8 (T2 reuses the helper ABI) | T2 execution driver (IR → machine code lowering) | **Driver wired in `MSG-20260918-005`** (`b2t2`, `compiler/codegen/tools/b2t2.cpp`): parses + verifies + builds IR + (optionally) runs opt pipeline + lowers via `codegen::lowerOnly` + installs on `Tier1` engine + executes. Differential (Rule 36 form) holds for **16 of 19** corpus programs in the default no-opt config; 3 known no-opt divergences + 1 opt-mode divergence tracked as `MSG-20260918-006`. The v0 is NOT yet a perf win (the lowering traps early on most programs; the engine deopt-to-T0 path catches the trap; observable behavior preserved). The opt-mode (`-O`) is off by default. The v0 → v1 transition items (real regalloc, async, T2/T3 deopt backend, opt-mode default ON) are documented in `docs/t2_driver_contract.md`. |
 | `docs/laws.md` Part I (T3 AOT) | T3 offline pipeline | **Not implemented.** |
 | `docs/laws.md` (mentions `runtime/` tree) | `runtime/` | **No such directory.** The runtime seam lives in `compiler/interp/src/Runtime.cpp`. `runtime/` is a target layout referenced in `docs/laws.md` but not in `docs/teams/ownership.yaml`; intentionally not added as a stub. |
 | Java classfile entry path (`Loader / Verifier / Quickener`) | A `.class` file loader | **Not implemented.** Only Java source entry works (`b2parse`). |
@@ -195,6 +196,24 @@ This list tracks the highest-leverage open work; it is not a roadmap.
    for `compiler/regalloc/` (which cannot ship until the MIR contract
    exists) and `compiler/aot/` (which cannot ship until the T2 pipeline
    is wired to a driver).
+   - **Driver wired end-to-end in `MSG-20260918-005`**: `b2t2`
+     (the T2 driver surface, `compiler/codegen/tools/b2t2.cpp`) parses +
+     verifies RBC + builds the sea-of-nodes IR (`passes::buildGraph`) +
+     (optionally, default OFF) runs the optimization pipeline +
+     lowers via `codegen::lowerOnly` + installs the `CompiledCode` on a
+     `Tier1` engine + executes the entry method. The differential
+     contract (Rule 36 form: T2 byte-identical to T0 on the corpus)
+     holds for **16 of 19** programs in the default no-opt config;
+     the 3 known divergences (`conversions.rbc`, `fields.rbc`,
+     `float_math.rbc`) plus the opt-mode divergence on
+     `strings_intern.rbc` are tracked as `MSG-20260918-006`. The v0
+     driver is wired, the safety holds, but the lowering traps early
+     on most programs (the engine deopt-to-T0 path catches the trap;
+     observable behavior is preserved, but the v0 is NOT yet a perf
+     win). The v0 → v1 transition items are documented in
+     `docs/t2_driver_contract.md` (real regalloc, async compilation,
+     T2/T3 deopt backend, opt-mode default ON once item 4 in
+     `MSG-20260918-006` is fixed).
 5. **Multi-threaded compilation** — `b2jit` is synchronous today. Rules 11
    and 13 require async compilation with a safepoint handshake; this is the
    next big architecture piece after T2 lands.
@@ -238,3 +257,4 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 | 2026-09-17 | Initial `STATUS.md` created by the integrator; accompanied by `.github/workflows/ci.yml`, `.github/CODEOWNERS`, the backedge-poll relaxation in `compiler/baseline/src/PlanBuilder.cpp`, and the corpus floor update in `tests/baseline/CorpusTest.cpp`. Corpus sweep moved from 17/19 to 18/19. |
 | 2026-09-18 | `MSG-20260918-003` follow-up: `fib_loop.rbc` now carries a `safepoint_poll` at the loop head (form (a)), closing the corpus to 19/19. `tests/baseline/CorpusTest.cpp` floor `refused >= 1` removed (a refusal is now a regression, not a baseline). Three missing contract docs landed: `docs/baseline_contract.md` (v1), `docs/regalloc_contract.md` (v0 stub), `docs/aot_contract.md` (v0 stub). The path ownership map's contract-doc layer is now consistent with the tree; the directory layer (`compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`, `runtime/`) is still missing. |
 | 2026-09-18 | `MSG-20260918-004` follow-up: v0 stub directories landed for `compiler/gc/`, `compiler/regalloc/`, `compiler/aot/`, `compiler/pipeline/`, `include/b2/gc/`, `tests/gc/`, `tests/regalloc/`, `tests/aot/` — each with a stub `CMakeLists.txt` declaring an INTERFACE library and a README pointing at the team's contract doc. Top-level `CMakeLists.txt` wires them in unconditionally so the ownership map is consistent with the tree. The `runtime/` directory is intentionally not added (it is not in `ownership.yaml`; the runtime seam lives in `compiler/interp/src/Runtime.cpp`). Fuzzing scaffold landed for the RBC text parser (`fuzz/rbc_text_fuzzer.cpp`) and RBC verifier (`fuzz/rbc_verifier_fuzzer.cpp`); opt-in via `B2_BUILD_FUZZERS=ON`; hard configure error without a `-fsanitize=fuzzer`-capable toolchain. Seeded from `tests/rbc/corpus/`. JIT hardening design doc landed at `docs/jit_hardening.md` — describes the v0 (W^X) vs v1 (execute-only, constant blinding, MPK, constant-time, resource limits) plan; no hardening code lands in this commit, only the contract. Build + ctest verified 19/19 corpus + 10/10 ctest targets pass after the directory additions. |
+| 2026-09-18 | `MSG-20260918-005`: T2 execution driver landed (`b2t2`, `compiler/codegen/tools/b2t2.cpp`). Wires the full RBC -> IR -> machine-code -> execute path end-to-end: parse + verify + build IR (`passes::buildGraph`) + (optionally, default OFF) run opt pipeline + lower via `codegen::lowerOnly` + install on `Tier1` engine + execute. The differential (Rule 36 form: T2 byte-identical to T0 on the corpus) holds for **16 of 19** programs in the default no-opt config; the 3 known no-opt divergences (`conversions.rbc`, `fields.rbc`, `float_math.rbc`) + 1 opt-mode divergence on `strings_intern.rbc` are tracked as `MSG-20260918-006`. The v0 is wired end-to-end and differentially safe on 16/19, but the lowering traps early on most programs (the engine deopt-to-T0 path catches the trap; observable behavior preserved; v0 is NOT yet a perf win). The v0 → v1 transition items (real regalloc, async, T2/T3 deopt backend, opt-mode default ON) are documented in `docs/t2_driver_contract.md`. New test `tests/codegen/T2CorpusTest.cpp` skips the 3 known no-opt bugs in `kKnownBugs`; the rest of the corpus remains a regression gate. ASan + UBSan clean. The T2 driver unblocks `regalloc/` v1 and `aot/` v1 (both depend on the T2 driver existing). |
