@@ -2,7 +2,7 @@
 
 **Status:** Living document, integrator-maintained
 **Owner:** B-2 integrator (`.github/`, top-level governance)
-**Last Updated:** 2026-09-18 (rev 3)
+**Last Updated:** 2026-09-18 (rev 4)
 **Related Sections:** `docs/laws.md`, `docs/teams/ownership.yaml`, `README.md`
 
 This document is the integrator's honest accounting of which parts of the
@@ -247,6 +247,33 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 11. **JCK-equivalent compatibility suite** — real Java programs, not
     hand-written `.rbc` fixtures.
 12. **Second architecture** — ARM64 backend.
+13. **Partial deopt (dependency-driven invalidation + minimal safe region
+    recompilation + atomic swap)** — the v1 layer on top of the v0
+    method-granularity invalidation (`docs/deopt_backend.md` Section 17).
+    When a T2 guard fails, the v0 does full method deopt to T0 (Rule 96
+    form, the existing path); the v1 attempts to salvage the speculation
+    by rebuilding only the smallest safe recompilation region containing
+    the broken assumption's dirty closure, keeping unaffected optimized
+    code alive. The IR already carries the compile-time scaffolding
+    (`ir::Dependency`, `ir::SpecMeta.dependency`, `ir::FrameStateDesc`,
+    `ir::Replacement`); the v0 contract surfaces are landed in
+    `include/b2/pipeline/` (`DependencyIndex.h`, `Region.h`,
+    `PartialDeopt.h`) and `docs/partial_deopt_contract.md` (25 sections
+    mirroring the design: dependency index, region structure, dirty-node
+    closure, region safety checks, partial rebuild, atomic activation,
+    deopt budget + hysteresis, verification gates, feature flags,
+    telemetry, dangerous cases, the production-safety principle "partial
+    deopt must never be required for correctness"). The v0 ships
+    shadow-only: `enable_partial_deopt = false` is the default; the
+    engine's trap handler in `compiler/codegen/src/Engine.cpp`
+    `executeCompiled` short-circuits every call to `onGuardFailure()` and
+    goes straight to the existing T0 deopt path. The v0 → v1 transition
+    implements the bodies; the v1 default flips to `true` once the shadow
+    comparison (compute partial plan, verify, do not activate, compare
+    with full deopt behavior) passes the corpus. The hard dependencies
+    are the T2 driver (landed in `MSG-20260918-005`) and the
+    multi-threaded compilation base (`docs/STATUS.md` item 5; the atomic
+    swap needs the safepoint handshake protocol, Rules 11/13).
 
 ---
 
@@ -258,3 +285,4 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 | 2026-09-18 | `MSG-20260918-003` follow-up: `fib_loop.rbc` now carries a `safepoint_poll` at the loop head (form (a)), closing the corpus to 19/19. `tests/baseline/CorpusTest.cpp` floor `refused >= 1` removed (a refusal is now a regression, not a baseline). Three missing contract docs landed: `docs/baseline_contract.md` (v1), `docs/regalloc_contract.md` (v0 stub), `docs/aot_contract.md` (v0 stub). The path ownership map's contract-doc layer is now consistent with the tree; the directory layer (`compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`, `runtime/`) is still missing. |
 | 2026-09-18 | `MSG-20260918-004` follow-up: v0 stub directories landed for `compiler/gc/`, `compiler/regalloc/`, `compiler/aot/`, `compiler/pipeline/`, `include/b2/gc/`, `tests/gc/`, `tests/regalloc/`, `tests/aot/` — each with a stub `CMakeLists.txt` declaring an INTERFACE library and a README pointing at the team's contract doc. Top-level `CMakeLists.txt` wires them in unconditionally so the ownership map is consistent with the tree. The `runtime/` directory is intentionally not added (it is not in `ownership.yaml`; the runtime seam lives in `compiler/interp/src/Runtime.cpp`). Fuzzing scaffold landed for the RBC text parser (`fuzz/rbc_text_fuzzer.cpp`) and RBC verifier (`fuzz/rbc_verifier_fuzzer.cpp`); opt-in via `B2_BUILD_FUZZERS=ON`; hard configure error without a `-fsanitize=fuzzer`-capable toolchain. Seeded from `tests/rbc/corpus/`. JIT hardening design doc landed at `docs/jit_hardening.md` — describes the v0 (W^X) vs v1 (execute-only, constant blinding, MPK, constant-time, resource limits) plan; no hardening code lands in this commit, only the contract. Build + ctest verified 19/19 corpus + 10/10 ctest targets pass after the directory additions. |
 | 2026-09-18 | `MSG-20260918-005`: T2 execution driver landed (`b2t2`, `compiler/codegen/tools/b2t2.cpp`). Wires the full RBC -> IR -> machine-code -> execute path end-to-end: parse + verify + build IR (`passes::buildGraph`) + (optionally, default OFF) run opt pipeline + lower via `codegen::lowerOnly` + install on `Tier1` engine + execute. The differential (Rule 36 form: T2 byte-identical to T0 on the corpus) holds for **16 of 19** programs in the default no-opt config; the 3 known no-opt divergences (`conversions.rbc`, `fields.rbc`, `float_math.rbc`) + 1 opt-mode divergence on `strings_intern.rbc` are tracked as `MSG-20260918-006`. The v0 is wired end-to-end and differentially safe on 16/19, but the lowering traps early on most programs (the engine deopt-to-T0 path catches the trap; observable behavior preserved; v0 is NOT yet a perf win). The v0 → v1 transition items (real regalloc, async, T2/T3 deopt backend, opt-mode default ON) are documented in `docs/t2_driver_contract.md`. New test `tests/codegen/T2CorpusTest.cpp` skips the 3 known no-opt bugs in `kKnownBugs`; the rest of the corpus remains a regression gate. ASan + UBSan clean. The T2 driver unblocks `regalloc/` v1 and `aot/` v1 (both depend on the T2 driver existing). |
+| 2026-09-18 | `MSG-20260918-007`: Partial deopt v0 contract landed (`docs/partial_deopt_contract.md`, 25 sections mirroring the design: dependency index, region structure, dirty-node closure, region safety checks, partial rebuild, atomic activation, deopt budget + hysteresis, verification gates, feature flags, telemetry, dangerous cases, the production-safety principle "partial deopt must never be required for correctness"). The IR already carries the compile-time scaffolding (`ir::Dependency`, `ir::SpecMeta.dependency`, `ir::FrameStateDesc`); the v0 contract surfaces are landed in `include/b2/pipeline/` (`DependencyIndex.h`, `Region.h`, `PartialDeopt.h`) — headers-only, no `.cpp` files, every function a no-op (returns `Disabled` / empty sets). `compiler/pipeline/CMakeLists.txt` declares `b2::pipeline` as an INTERFACE library linking `b2::ir` so consumers get the include path transitively. `docs/deopt_backend.md` Section 17 cross-references the partial deopt contract. The v0 ships shadow-only: `enable_partial_deopt = false` is the default; the engine's trap handler in `compiler/codegen/src/Engine.cpp` `executeCompiled` short-circuits every call to `onGuardFailure()` and goes straight to the existing T0 deopt path. New open-work item 13 added to "Recommended next steps". The hard dependencies are the T2 driver (landed in `MSG-20260918-005`) and the multi-threaded compilation base (`docs/STATUS.md` item 5; the atomic swap needs the safepoint handshake protocol, Rules 11/13). Build + 10/10 ctest targets pass after the contract surface additions (no behavior change; the v0 is shadow-only). |

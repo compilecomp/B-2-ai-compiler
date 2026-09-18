@@ -701,6 +701,22 @@ Important:> Invalidation must be visible before new code based on newer assumpti
 
 No racing invalidation with installation.
 
+> **Cross-reference:** This is the v0 method-granularity invalidation.
+> The v0 → v1 transition extends it with **region-granularity partial
+> deopt** (dependency-driven invalidation + minimal safe region
+> recompilation + atomic swap). The contract is
+> `docs/partial_deopt_contract.md`; the runtime structures live in
+> `include/b2/pipeline/` (`DependencyIndex.h`, `Region.h`,
+> `PartialDeopt.h`). The v0 default `enable_partial_deopt = false`
+> short-circuits every call to the partial deopt layer; the engine's
+> trap handler in `compiler/codegen/src/Engine.cpp` `executeCompiled`
+> goes straight to the existing T0 deopt path (the v0 path, unchanged).
+> The v1 flips the default once the shadow comparison passes the
+> corpus (Section 21 of the partial deopt contract). **Status: v0
+> design — not implemented** (the contract surfaces are landed; the
+> implementations are the v0 → v1 transition's work, tracked as
+> `docs/STATUS.md` item 13).
+
 ---
 
 ## 18. Deopt throttling

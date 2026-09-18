@@ -8,11 +8,12 @@
 # integrator-owned paths so PRs that touch them get an explicit review.
 
 # Integrator-owned (shared / cross-team governance):
-/.github/                    @compilecomp
-/CMakeLists.txt              @compilecomp
-/LICENSE                     @compilecomp
-/README.md                   @compilecomp
-/docs/STATUS.md              @compilecomp
-/docs/jit_hardening.md       @compilecomp
-/docs/t2_driver_contract.md  @compilecomp
-/fuzz/                       @compilecomp
+/.github/                       @compilecomp
+/CMakeLists.txt                 @compilecomp
+/LICENSE                        @compilecomp
+/README.md                      @compilecomp
+/docs/STATUS.md                 @compilecomp
+/docs/jit_hardening.md          @compilecomp
+/docs/t2_driver_contract.md     @compilecomp
+/docs/partial_deopt_contract.md @compilecomp
+/fuzz/                          @compilecomp
