@@ -13,3 +13,5 @@
 /LICENSE                     @compilecomp
 /README.md                   @compilecomp
 /docs/STATUS.md              @compilecomp
+/docs/jit_hardening.md       @compilecomp
+/fuzz/                       @compilecomp

@@ -25,8 +25,12 @@ concurrency:
 #   - the 150-rule law system itself is not mechanically enforced yet;
 #   - team ownership boundaries (docs/teams/ownership.yaml) are not checked;
 #   - there is no Java spec compatibility suite (no JCK-equivalent);
-#   - there is no fuzzing harness (Rule 88 / safepoint stress live in tests/
-#     corpus only).
+#   - fuzzing harnesses exist (fuzz/) but are NOT run by CI (the default
+#     toolchain g++-14 has no libFuzzer; the harnesses are opt-in via
+#     B2_BUILD_FUZZERS=ON with clang + -fsanitize=fuzzer).
+#   - JIT hardening is design-only (docs/jit_hardening.md); W^X is honored
+#     in the code, but execute-only memory / MPK / constant blinding /
+#     per-thread PKRU isolation are not implemented.
 # These are tracked as open work in docs/STATUS.md.
 
 jobs:

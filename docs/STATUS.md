@@ -2,7 +2,7 @@
 
 **Status:** Living document, integrator-maintained
 **Owner:** B-2 integrator (`.github/`, top-level governance)
-**Last Updated:** 2026-09-18
+**Last Updated:** 2026-09-18 (rev 2)
 **Related Sections:** `docs/laws.md`, `docs/teams/ownership.yaml`, `README.md`
 
 This document is the integrator's honest accounting of which parts of the
@@ -46,19 +46,19 @@ exist, build, and produce the documented behavior.
 
 | Claimed in / expected from | Path expected | Reality |
 |---|---|---|
-| `docs/teams/ownership.yaml` (gc team) | `compiler/gc/`, `include/b2/gc/`, `tests/gc/` | **No code.** `docs/gc.md` is design fiction. The interpreter uses a bump allocator (`compiler/interp/src/Heap.cpp`, 312 lines) with handles; no generational collector, no write barriers, no concurrent marking. |
-| `docs/teams/ownership.yaml` (regalloc team) | `compiler/regalloc/`, `tests/regalloc/` | **No code, no team directory, no contract doc.** |
-| `docs/teams/ownership.yaml` (aot team) | `compiler/aot/`, `tests/aot/` | **No code, no team directory, no contract doc.** T3 AOT is entirely missing. |
-| `docs/teams/ownership.yaml` (passes team includes `compiler/pipeline/`) | `compiler/pipeline/` | **No such directory.** Pass implementations live in `compiler/passes/`. |
+| `docs/teams/ownership.yaml` (gc team) | `compiler/gc/`, `include/b2/gc/`, `tests/gc/` | **v0 stub directories landed** in `MSG-20260918-004` (INTERFACE library + README pointing at the contract). **No code.** `docs/gc.md` is design fiction. The interpreter uses a bump allocator (`compiler/interp/src/Heap.cpp`, 312 lines) with handles; no generational collector, no write barriers, no concurrent marking. |
+| `docs/teams/ownership.yaml` (regalloc team) | `compiler/regalloc/`, `tests/regalloc/` | **v0 stub directories landed** in `MSG-20260918-004` (INTERFACE library + README pointing at the contract). **No allocator code.** The v0 contract is `docs/regalloc_contract.md`; the v1 implementation is blocked on the T2 execution driver and the MIR contract between codegen and regalloc. |
+| `docs/teams/ownership.yaml` (aot team) | `compiler/aot/`, `tests/aot/` | **v0 stub directories landed** in `MSG-20260918-004` (INTERFACE library + README pointing at the contract). **No AOT code.** The v0 contract is `docs/aot_contract.md`; the v1 implementation is blocked on the T2 driver, the deopt backend, and closure analysis. |
+| `docs/teams/ownership.yaml` (passes team includes `compiler/pipeline/`) | `compiler/pipeline/` | **v0 stub directory landed** in `MSG-20260918-004` (INTERFACE library + README). **No pipeline orchestrator code.** Pass implementations live in `compiler/passes/`; the pipeline driver that orders them is blocked on the T2 execution driver. |
 | `docs/laws.md` (Rule 11 / Rule 13: mutator threads never block on JIT; compiler threads never block on mutator state) | Async compilation, safepoint handshake protocol | **Not implemented.** `b2jit` is synchronous, single-threaded. No `std::thread` / `std::async` / `std::jthread` in `compiler/`. The laws' multi-threaded contracts are open work. |
 | `docs/laws.md` Part I (T2 optimizing JIT) and `docs/codegen_contract.md` SS8 (T2 reuses the helper ABI) | T2 execution driver (IR → machine code lowering) | **Pass bodies exist but no driver runs them.** `compiler/codegen/src/T2Lowering.cpp` is a partial lowering that is not wired into any execution path; the `b2graph` tool dumps graphs only. |
 | `docs/laws.md` Part I (T3 AOT) | T3 offline pipeline | **Not implemented.** |
-| `docs/laws.md` (mentions `runtime/` tree) | `runtime/` | **No such directory.** The runtime seam lives in `compiler/interp/src/Runtime.cpp`. |
+| `docs/laws.md` (mentions `runtime/` tree) | `runtime/` | **No such directory.** The runtime seam lives in `compiler/interp/src/Runtime.cpp`. `runtime/` is a target layout referenced in `docs/laws.md` but not in `docs/teams/ownership.yaml`; intentionally not added as a stub. |
 | Java classfile entry path (`Loader / Verifier / Quickener`) | A `.class` file loader | **Not implemented.** Only Java source entry works (`b2parse`). |
 | Java standard library (`java.lang.*`, `java.io.*`, `java.util.*`) | Runtime stub for `java/lang/System.out.println(I)V` and a handful of others | **Stub only.** No `rt.jar` equivalent, no real classpath. Real Java programs that touch anything beyond the stubbed methods will not run. |
 | Multi-architecture (ARM64, RISC-V) | Backend selection in `compiler/codegen/` | **x86-64 only.** Laws don't mention this. |
-| Fuzzing harnesses | `fuzz/` or libFuzzer/AFL integrations | **None.** For a JIT that emits executable machine code, this is a serious gap. |
-| JIT spraying / execute-only memory / `PKEY_MPROTECT` mitigations | Hardening in `compiler/codegen/` | **Not implemented.** W^X is honored (`mprotect` flips), but no execute-only memory, no MPK isolation, no constant-time blinding. |
+| Fuzzing harnesses | `fuzz/` or libFuzzer/AFL integrations | **Scaffold landed** in `MSG-20260918-004`: `fuzz/rbc_text_fuzzer.cpp` (RBC text parser) and `fuzz/rbc_verifier_fuzzer.cpp` (RBC verifier), opt-in via `B2_BUILD_FUZZERS=ON` (clang + `-fsanitize=fuzzer`). Seeded from `tests/rbc/corpus/`. **CI does not yet run them** (default toolchain is g++-14); **T1/T0/stencil harnesses not yet landed** (blocked on teardown plumbing and per-run heap reset). |
+| JIT spraying / execute-only memory / `PKEY_MPROTECT` mitigations | Hardening in `compiler/codegen/` | **W^X honored** today (every JIT buffer goes through `mprotect` flips: never writable-while-executable, see `compiler/codegen/src/Instantiate.cpp` lines 843-878 and `compiler/codegen/src/T2Lowering.cpp` lines 1239-1252). **No execute-only memory, no MPK isolation, no constant-time blinding, no JIT spraying mitigations.** The v1 plan is documented in `docs/jit_hardening.md` (landed `MSG-20260918-004`); the code is not yet landed. |
 
 ---
 
@@ -91,11 +91,12 @@ team contract docs that did not exist:
   v0 stub in `MSG-20260918-003`. Acknowledges no implementation; forward
   contract for the T2-pipeline-driven offline compiler (Amendment B.5).
 
-The ownership map is now consistent with the tree for the contract doc
-paths. The directory paths (`compiler/regalloc/`, `compiler/aot/`,
-`compiler/gc/`, `compiler/pipeline/`, `runtime/`) are still missing;
-the decision to add v0 stub directories or remove them from the map
-until they ship is tracked in "Recommended next steps" item 2 below.
+The ownership map is now consistent with the tree at both layers:
+contract-doc layer (closed in `MSG-20260918-003`) and directory layer
+(closed in `MSG-20260918-004`, see "Recommended next steps" item 2).
+The `runtime/` directory is intentionally not added — it is a target
+layout referenced in `docs/laws.md` but not in `docs/teams/ownership.yaml`;
+the runtime seam today lives in `compiler/interp/src/Runtime.cpp`.
 
 ---
 
@@ -151,11 +152,18 @@ description of separate committers. When this document says "the
 interpreter team" or "the codegen team", it means "the agent acting in
 that role for that path", not a separate reviewer.
 
-The path ownership map is also out of date in one place: it lists
-`docs/baseline_contract.md`, `docs/regalloc_contract.md`, and
-`docs/aot_contract.md` as team contract docs, but none of those files exist.
-The integrator will either add stubs or reconcile the ownership map in a
-follow-up.
+The path ownership map is now consistent with the tree at both layers:
+the contract-doc layer landed in `MSG-20260918-003`
+(`docs/baseline_contract.md`, `docs/regalloc_contract.md`,
+`docs/aot_contract.md`); the directory layer landed in `MSG-20260918-004`
+(`compiler/gc/`, `compiler/regalloc/`, `compiler/aot/`, `compiler/pipeline/`,
+`include/b2/gc/`, `tests/gc/`, `tests/regalloc/`, `tests/aot/` — each with a
+v0 stub `CMakeLists.txt` declaring an INTERFACE library and a README
+pointing at the contract doc). The `runtime/` directory is still missing —
+it is not in the ownership map (the runtime seam lives in
+`compiler/interp/src/Runtime.cpp`); only `docs/laws.md` references it as a
+future tree. That reference is acknowledged in `docs/laws.md` as a target
+layout, not a current one.
 
 ---
 
@@ -167,15 +175,17 @@ This list tracks the highest-leverage open work; it is not a roadmap.
    backedge check accepts it; this closes the 18/19 → 19/19 corpus gap.
    Belongs to the interpreter team (their corpus file). Tracked as an open
    BUG message.~~ — **CLOSED in `MSG-20260918-003`**; corpus is 19/19.
-2. **Reconcile `docs/teams/ownership.yaml`** with reality: either add
+2. ~~**Reconcile `docs/teams/ownership.yaml`** with reality: either add
    `compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`,
    `runtime/` directories with v0 stubs (an empty `CMakeLists.txt` and a
    README pointing at the team's contract doc), or remove them from the
    ownership map until they exist. Either choice is honest; the current
-   state — paths claimed but missing — is not. The team contract docs
-   (`docs/baseline_contract.md`, `docs/regalloc_contract.md`,
-   `docs/aot_contract.md`) are now landed, so the contract doc layer is
-   consistent; the directory layer is still inconsistent.
+   state — paths claimed but missing — is not.~~ — **CLOSED in
+   `MSG-20260918-004`**: v0 stub directories landed for `compiler/gc/`,
+   `compiler/regalloc/`, `compiler/aot/`, `compiler/pipeline/`,
+   `include/b2/gc/`, `tests/gc/`, `tests/regalloc/`, `tests/aot/`. The
+   `runtime/` directory is not in `ownership.yaml`; the runtime seam lives
+   in `compiler/interp/src/Runtime.cpp` and is acknowledged there.
 3. ~~**Add the missing contract docs** (`docs/baseline_contract.md`,
    `docs/regalloc_contract.md`, `docs/aot_contract.md`) or remove the
    references from the ownership map.~~ — **CLOSED in `MSG-20260918-003`**.
@@ -197,8 +207,24 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 8. **Java classfile loader** — the `.class` entry path is entirely missing.
 9. **Fuzzing harnesses** for the RBC parser, RBC verifier, stencil
    instantiator, T1 execution, T0 interpreter.
+   - **Scaffold landed in `MSG-20260918-004`** for two of five entry
+     points: `fuzz/rbc_text_fuzzer.cpp` (RBC text parser) and
+     `fuzz/rbc_verifier_fuzzer.cpp` (RBC verifier). Opt-in via
+     `B2_BUILD_FUZZERS=ON` (clang + `-fsanitize=fuzzer`). Seeded from
+     `tests/rbc/corpus/`. CI does not yet run them (default toolchain
+     is g++-14). The remaining three entry points (T1 instantiation,
+     T0 interpreter, stencil instantiator) are blocked on plumbing
+     teardown paths to the fuzzer's exit (T1) and a per-run heap reset
+     API (T0); both are tracked as v1 work in `fuzz/README.md`.
 10. **JIT hardening** — execute-only memory, JIT spraying mitigations,
     `PKEY_MPROTECT` where available.
+    - **Design doc landed in `MSG-20260918-004`**: `docs/jit_hardening.md`
+      describes the v0 (W^X is honored today, every other mitigation is
+      open work) vs v1 (execute-only memory via MPK, constant blinding,
+      per-thread PKRU isolation, constant-time mode, resource limits)
+      plan. The hardening code itself is not yet landed; the design doc
+      is the honest contract for what the JIT does today and what it
+      will do when the v1 work ships.
 11. **JCK-equivalent compatibility suite** — real Java programs, not
     hand-written `.rbc` fixtures.
 12. **Second architecture** — ARM64 backend.
@@ -211,3 +237,4 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 |---|---|
 | 2026-09-17 | Initial `STATUS.md` created by the integrator; accompanied by `.github/workflows/ci.yml`, `.github/CODEOWNERS`, the backedge-poll relaxation in `compiler/baseline/src/PlanBuilder.cpp`, and the corpus floor update in `tests/baseline/CorpusTest.cpp`. Corpus sweep moved from 17/19 to 18/19. |
 | 2026-09-18 | `MSG-20260918-003` follow-up: `fib_loop.rbc` now carries a `safepoint_poll` at the loop head (form (a)), closing the corpus to 19/19. `tests/baseline/CorpusTest.cpp` floor `refused >= 1` removed (a refusal is now a regression, not a baseline). Three missing contract docs landed: `docs/baseline_contract.md` (v1), `docs/regalloc_contract.md` (v0 stub), `docs/aot_contract.md` (v0 stub). The path ownership map's contract-doc layer is now consistent with the tree; the directory layer (`compiler/regalloc/`, `compiler/aot/`, `compiler/gc/`, `compiler/pipeline/`, `runtime/`) is still missing. |
+| 2026-09-18 | `MSG-20260918-004` follow-up: v0 stub directories landed for `compiler/gc/`, `compiler/regalloc/`, `compiler/aot/`, `compiler/pipeline/`, `include/b2/gc/`, `tests/gc/`, `tests/regalloc/`, `tests/aot/` — each with a stub `CMakeLists.txt` declaring an INTERFACE library and a README pointing at the team's contract doc. Top-level `CMakeLists.txt` wires them in unconditionally so the ownership map is consistent with the tree. The `runtime/` directory is intentionally not added (it is not in `ownership.yaml`; the runtime seam lives in `compiler/interp/src/Runtime.cpp`). Fuzzing scaffold landed for the RBC text parser (`fuzz/rbc_text_fuzzer.cpp`) and RBC verifier (`fuzz/rbc_verifier_fuzzer.cpp`); opt-in via `B2_BUILD_FUZZERS=ON`; hard configure error without a `-fsanitize=fuzzer`-capable toolchain. Seeded from `tests/rbc/corpus/`. JIT hardening design doc landed at `docs/jit_hardening.md` — describes the v0 (W^X) vs v1 (execute-only, constant blinding, MPK, constant-time, resource limits) plan; no hardening code lands in this commit, only the contract. Build + ctest verified 19/19 corpus + 10/10 ctest targets pass after the directory additions. |
