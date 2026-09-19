@@ -428,6 +428,67 @@ If any check fails, the system escalates to full method deopt
 (Section 10). The checks are conservative; the v0 → v1 transition
 may relax them as the test corpus grows.
 
+### v0.1 implementation status
+
+**Status: v0.1 — checks 1-7 implemented; checks 8-10 stubbed.**
+The v0.1 implementation landed in `MSG-20260918-010`
+(`compiler/pipeline/src/RegionSafety.cpp` +
+`include/b2/pipeline/RegionSafety.h`). The checker runs the 10
+checks in order; the first failing check sets the verdict and
+stops (no need to run further checks — the region is unsafe
+regardless of the remaining checks' results).
+
+The implemented checks (1-7):
+
+1. **Control entry** — `entryControl` is a valid control-entry
+   node kind (Start / IfTrue / IfFalse / SwitchCase / SwitchDefault /
+   LoopBegin / Region) AND is in the region's `nodes` list.
+2. **Control exits** — every exit control is either terminal
+   (Return / Unwind / Deopt) OR a node whose control successors
+   (users with `InputRole::Ctrl`) are OUTSIDE the region.
+3. **Dangling uses** — for every node in `nodes`, every use
+   outside the region is in `exitValues`.
+4. **Exception edges** — for every Call* node in `nodes`, its
+   CallExcept projection is either inside the region OR equal
+   to `exceptionExit`.
+5. **Memory state** — if the region has memory-state nodes,
+   `entryMemory` is the unique external Mem predecessor and
+   `exitMemory` is the unique external Mem successor. If the
+   region has NO memory-state nodes, `entryMemory` and
+   `exitMemory` must be equal OR both invalid (the memory state
+   flows through unchanged).
+6. **Effect ordering** — every memory-state node in `nodes` has
+   at most ONE Mem input (no forked memory chain). The full
+   effect-ordering check (per `b2/ir/Effect.h`'s reorder table)
+   is the v0 → v1 transition's work.
+7. **Phi resolvable** — every Phi node in `nodes` has all its
+   inputs either in `nodes` OR in `entryValues`.
+
+The stubbed checks (8-10) return `RegionSafety::Safe` (the v0.1
+is shadow-only; the stubs don't escalate). The v0 → v1 transition
+must implement them before flipping `enable_partial_deopt = true`:
+
+8. **Side-effect duplication** — requires a region registry (to
+   check that no side-effecting node is in multiple regions).
+9. **GC roots** — requires GC map machinery (the T1 baseline's
+   stack map format from `docs/baseline_contract.md` SS4).
+10. **Deopt state** — requires the method's RBC code range (to
+    verify the FrameState's pc is in range).
+
+The checker is unit-tested in `tests/pipeline/RegionSafetyTests.cpp`
+(12 tests: simple safe region, check 1 invalid entry kind, check 1
+entry not in region, check 2 empty exits, check 3 dangling use,
+check 4 Call* without CallExcept, check 5 memory boundary smoke,
+check 6 effect ordering smoke, check 7 phi resolvable smoke, stubs
+8-10 don't escalate, determinism, the `regionSafetyCheckName`
+helper). The tests construct minimal IR graphs + Region structs by
+hand (same approach as `tests/pipeline/DirtyClosureTests.cpp`).
+
+DETERMINISM (Rule 124): the checks are deterministic — the
+iteration is in the region's `nodes` list order (sorted by NodeId,
+per the Region struct's invariant), and the use-def chain walks
+are in the IR's node-id order.
+
 ---
 
 ## 7. Copy-on-write; never patch live nodes (v0 invariant)

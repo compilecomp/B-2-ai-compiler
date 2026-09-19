@@ -2,7 +2,7 @@
 
 **Status:** Living document, integrator-maintained
 **Owner:** B-2 integrator (`.github/`, top-level governance)
-**Last Updated:** 2026-09-18 (rev 6)
+**Last Updated:** 2026-09-18 (rev 7)
 **Related Sections:** `docs/laws.md`, `docs/teams/ownership.yaml`, `README.md`
 
 This document is the integrator's honest accounting of which parts of the
@@ -258,30 +258,39 @@ This list tracks the highest-leverage open work; it is not a roadmap.
     (`ir::Dependency`, `ir::SpecMeta.dependency`, `ir::FrameStateDesc`,
     `ir::Replacement`); the v0 contract surfaces are landed in
     `include/b2/pipeline/` (`DependencyIndex.h`, `Region.h`,
-    `PartialDeopt.h`, `DirtyClosure.h`) and `docs/partial_deopt_contract.md`
-    (25 sections mirroring the design: dependency index, region structure,
-    dirty-node closure, region safety checks, partial rebuild, atomic
-    activation, deopt budget + hysteresis, verification gates, feature
-    flags, telemetry, dangerous cases, the production-safety principle
-    "partial deopt must never be required for correctness"). The v0.1
-    implementation of the dirty-node closure algorithm (Section 5) landed
-    in `MSG-20260918-008` (`compiler/pipeline/src/DirtyClosure.cpp`): the
-    forward closure walks def-use chains through Data/Mem/FrameState/Parent
-    roles; side-effecting users (Call/Memory/Guard) always propagate dirty;
-    the budget cap is enforced; the algorithm is deterministic (Rule 124).
-    12 unit tests in `tests/pipeline/DirtyClosureTests.cpp`. The backward
-    closure (region expansion through boundary nodes) requires the region
-    builder, which is open work. The v0 ships shadow-only:
-    `enable_partial_deopt = false` is the default; the engine's trap
-    handler in `compiler/codegen/src/Engine.cpp` `executeCompiled`
-    short-circuits every call to `onGuardFailure()` and goes straight to
-    the existing T0 deopt path. The v0 → v1 transition implements the
-    bodies; the v1 default flips to `true` once the shadow comparison
-    (compute partial plan, verify, do not activate, compare with full
-    deopt behavior) passes the corpus. The hard dependencies are the T2
-    driver (landed in `MSG-20260918-005`) and the multi-threaded
-    compilation base (`docs/STATUS.md` item 5; the atomic swap needs the
-    safepoint handshake protocol, Rules 11/13).
+    `PartialDeopt.h`, `DirtyClosure.h`, `RegionSafety.h`) and
+    `docs/partial_deopt_contract.md` (25 sections mirroring the design:
+    dependency index, region structure, dirty-node closure, region safety
+    checks, partial rebuild, atomic activation, deopt budget + hysteresis,
+    verification gates, feature flags, telemetry, dangerous cases, the
+    production-safety principle "partial deopt must never be required for
+    correctness"). The v0.1 implementation of the dirty-node closure
+    algorithm (Section 5) landed in `MSG-20260918-008`
+    (`compiler/pipeline/src/DirtyClosure.cpp`): the forward closure walks
+    def-use chains through Data/Mem/FrameState/Parent roles; side-effecting
+    users (Call/Memory/Guard) always propagate dirty; the budget cap is
+    enforced; the algorithm is deterministic (Rule 124). The v0.1.1
+    (`MSG-20260918-009`) made the budget constant a single source of truth
+    + documented rationale + drift-guard tests. The v0.2 region safety
+    checks (Section 6) landed in `MSG-20260918-010`
+    (`compiler/pipeline/src/RegionSafety.cpp`): checks 1-7 implemented
+    (control entry, control exits, dangling uses, exception edges, memory
+    state, effect ordering, phi resolvable); checks 8-10 stubbed (side-
+    effect duplication, GC roots, deopt state — require machinery that
+    doesn't exist yet). 26 unit tests in `tests/pipeline/` (14 dirty
+    closure + 12 region safety). The backward closure (region expansion
+    through boundary nodes) requires the region builder, which is open
+    work. The v0 ships shadow-only: `enable_partial_deopt = false` is the
+    default; the engine's trap handler in
+    `compiler/codegen/src/Engine.cpp` `executeCompiled` short-circuits
+    every call to `onGuardFailure()` and goes straight to the existing T0
+    deopt path. The v0 → v1 transition implements the bodies; the v1
+    default flips to `true` once the shadow comparison (compute partial
+    plan, verify, do not activate, compare with full deopt behavior)
+    passes the corpus. The hard dependencies are the T2 driver (landed in
+    `MSG-20260918-005`) and the multi-threaded compilation base
+    (`docs/STATUS.md` item 5; the atomic swap needs the safepoint
+    handshake protocol, Rules 11/13).
 
 ---
 
@@ -296,3 +305,4 @@ This list tracks the highest-leverage open work; it is not a roadmap.
 | 2026-09-18 | `MSG-20260918-007`: Partial deopt v0 contract landed (`docs/partial_deopt_contract.md`, 25 sections mirroring the design: dependency index, region structure, dirty-node closure, region safety checks, partial rebuild, atomic activation, deopt budget + hysteresis, verification gates, feature flags, telemetry, dangerous cases, the production-safety principle "partial deopt must never be required for correctness"). The IR already carries the compile-time scaffolding (`ir::Dependency`, `ir::SpecMeta.dependency`, `ir::FrameStateDesc`); the v0 contract surfaces are landed in `include/b2/pipeline/` (`DependencyIndex.h`, `Region.h`, `PartialDeopt.h`) — headers-only, no `.cpp` files, every function a no-op (returns `Disabled` / empty sets). `compiler/pipeline/CMakeLists.txt` declares `b2::pipeline` as an INTERFACE library linking `b2::ir` so consumers get the include path transitively. `docs/deopt_backend.md` Section 17 cross-references the partial deopt contract. The v0 ships shadow-only: `enable_partial_deopt = false` is the default; the engine's trap handler in `compiler/codegen/src/Engine.cpp` `executeCompiled` short-circuits every call to `onGuardFailure()` and goes straight to the existing T0 deopt path. New open-work item 13 added to "Recommended next steps". The hard dependencies are the T2 driver (landed in `MSG-20260918-005`) and the multi-threaded compilation base (`docs/STATUS.md` item 5; the atomic swap needs the safepoint handshake protocol, Rules 11/13). Build + 10/10 ctest targets pass after the contract surface additions (no behavior change; the v0 is shadow-only). |
 | 2026-09-18 | `MSG-20260918-008`: Partial deopt v0.1 — dirty-node closure algorithm implemented (`compiler/pipeline/src/DirtyClosure.cpp` + `include/b2/pipeline/DirtyClosure.h`). The forward closure walks def-use chains through `InputRole::Data/Mem/FrameState/Parent` (Ctrl and None do NOT propagate); side-effecting users (`NodeClass::Call/Memory` non-Pure / `NodeClass::Guard`) ALWAYS propagate dirty regardless of the input slot's role (Section 13: "If a dirty region contains calls/stores/allocations, be conservative"). The `semanticsDependOn` predicate is exposed for unit tests + the v0 → v1 transition's relaxation. The budget cap is enforced: if the closure exceeds `max_dirty_region_size` (default 64; `PartialDeoptConfig::max_dirty_region_size`), the algorithm sets `DirtyClosureResult::budget_exceeded = true` and stops; the caller escalates to full method deopt. 12 unit tests in `tests/pipeline/DirtyClosureTests.cpp` (empty seed, seed dedup, dead-seed drop, Data/Mem/Parent propagation, Ctrl no-propagation, side-effecting-user rule, budget cap, determinism, the `semanticsDependOn` predicate). `b2_pipeline` is now a STATIC library (was INTERFACE in v0). New ctest target `pipeline_tests` (the 12th test, 12/12 pass). Build + ctest verified 19/19 T1 corpus + 16/19 T2 differential + 12/12 pipeline tests pass; ASan+UBSan clean. The backward closure (region expansion through boundary nodes) requires the region builder, which is open work. The v0 → v1 transition items: region builder, region safety checks, partial rebuild, atomic activation, the guard-failure integration (the engine's trap handler calling `onGuardFailure()`). |
 | 2026-09-18 | `MSG-20260918-009`: Partial deopt v0.1.1 — budget constant single source of truth. The default `max_dirty_region_size = 64` was previously a duplicated literal in two headers (`kDefaultMaxDirtyRegionSize` in `DirtyClosure.h` and `PartialDeoptConfig::max_dirty_region_size` in `PartialDeopt.h`) — a drift hazard flagged in review. Fixed: `PartialDeoptConfig::max_dirty_region_size` now defaults to `kDefaultMaxDirtyRegionSize` (single source of truth). Added rationale comments: (1) for `kDefaultMaxDirtyRegionSize = 64` — 64 IR nodes is roughly the size of a hot loop body or a small inlined callee, small enough that the partial rebuild is ~1-3 ms (the deopt-to-reopt latency budget, Section 22), large enough to cover the common salvage cases without trivially over-escalating on real Java methods; (2) for `partial_deopt_budget = 3` — 1 deopt is normal, 2 is suspicious, 3 is the action threshold (the recompile is thrashing; stop attempting partial deopt for the method until the window resets). Added 2 drift-guard unit tests: `pipeline_dirty_closure_default_budget_single_source_of_truth` (asserts `PartialDeoptConfig::max_dirty_region_size == kDefaultMaxDirtyRegionSize`) and `pipeline_dirty_closure_runtime_override_of_default_budget` (verifies the algorithm takes `max_size` as a parameter at the call site, no hard-coded literal inside). Updated `docs/partial_deopt_contract.md` Sections 19 + 21 to reflect the single source of truth. 14/14 pipeline tests pass (was 12; the 2 new drift-guard tests are the 13th and 14th). Build + ctest verified 19/19 T1 corpus + 16/19 T2 differential + 12/12 ctest targets pass; ASan+UBSan clean. No behavior change: the algorithm's default value (64) is unchanged; only the code organization changed (single source of truth + documented rationale + drift guard). |
+| 2026-09-18 | `MSG-20260918-010`: Partial deopt v0.2 — region safety checks implemented (`compiler/pipeline/src/RegionSafety.cpp` + `include/b2/pipeline/RegionSafety.h`). The checker runs the 10 safety checks from Section 6 of the contract; the first failing check sets the verdict and stops. Checks 1-7 fully implemented (control entry, control exits, dangling uses, exception edges, memory state, effect ordering, phi resolvable). Checks 8-10 stubbed (`Safe` return — the v0.1 is shadow-only; the stubs require machinery that doesn't exist yet: side-effect duplication needs a region registry; GC roots needs the T1 baseline's stack map format; deopt state needs the method's RBC code range). Added `nodes` field to the `Region` struct (the interior nodes from the dirty closure; the boundary fields describe the contract with the rest of the graph; `nodes` is the explicit list for the safety checks + the partial rebuild). 12 new unit tests in `tests/pipeline/RegionSafetyTests.cpp` (simple safe region, check 1 invalid entry kind, check 1 entry not in region, check 2 empty exits, check 3 dangling use, check 4 Call* without CallExcept, check 5 memory boundary smoke, check 6 effect ordering smoke, check 7 phi resolvable smoke, stubs 8-10 don't escalate, determinism, the `regionSafetyCheckName` helper). 26/26 pipeline tests pass (was 14; the 12 new region safety tests are the 15th through 26th). Build + ctest verified 19/19 T1 corpus + 16/19 T2 differential + 12/12 ctest targets pass; ASan+UBSan clean. No behavior change: the v0.2 is shadow-only, the engine's trap handler is unchanged. The v0 → v1 transition items: region builder (constructs a Region from a dirty closure + the minimal safe region containing it), the 3 stubbed safety checks (8-10), partial rebuild, atomic activation, the guard-failure integration. |

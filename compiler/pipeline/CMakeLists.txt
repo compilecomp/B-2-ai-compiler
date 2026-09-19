@@ -18,6 +18,7 @@
 
 add_library(b2_pipeline STATIC
   src/DirtyClosure.cpp
+  src/RegionSafety.cpp
 )
 add_library(b2::pipeline ALIAS b2_pipeline)
 target_include_directories(b2_pipeline PUBLIC

@@ -86,6 +86,23 @@ struct Region {
   // the exception exit is part of the boundary contract.
   ir::NodeId exceptionExit = ir::kInvalidNodeId;
 
+  // The interior nodes of the region (the dirty closure's nodes that
+  // the region contains). The boundary fields above (entryControl,
+  // exitControls, entryValues, exitValues, entryMemory, exitMemory,
+  // exceptionExit) describe the region's contract with the rest of the
+  // graph; the `nodes` field is the explicit list of interior nodes
+  // (for the safety checks in `b2/pipeline/RegionSafety.h` + the
+  // partial rebuild in the v0 -> v1 transition).
+  //
+  // The region builder (v0 -> v1 transition, Section 4 of the contract)
+  // constructs this list from the dirty closure's `DirtySet`. The
+  // safety checker walks this list to verify the 10 checks from
+  // Section 6 (no dangling uses, no unhandled exceptions, etc.).
+  //
+  // The list is sorted by NodeId (deterministic, Rule 124; matches
+  // the DirtySet's invariant from `b2/pipeline/DirtyClosure.h`).
+  std::vector<ir::NodeId> nodes;
+
   // Assumptions + guards: the speculative metadata this region
   // depends on. Mirrors the per-node SpecMeta.dependency but at
   // region granularity (a region's assumptions are the union of

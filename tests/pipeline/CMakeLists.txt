@@ -16,6 +16,7 @@
 add_executable(b2_pipeline_tests
   TestMain.cpp
   DirtyClosureTests.cpp
+  RegionSafetyTests.cpp
 )
 
 target_link_libraries(b2_pipeline_tests PRIVATE b2::pipeline b2::ir)
