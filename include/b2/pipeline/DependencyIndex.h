@@ -10,11 +10,6 @@
 // this to mark nodes dirty when an assumption breaks (Section 5 of
 // the contract: dirty-node closure).
 //
-// This header is the v0 contract surface: the type definitions and
-// the API the runtime will call. The implementation is the v0 -> v1
-// transition's work; the v0 ships shadow-only (compute the plan,
-// verify it, do not activate, see Section 21 of the contract).
-//
 // The DependencyIndex lives in the pipeline orchestrator
 // (compiler/pipeline/) because:
 //   - the IR's `Graph` is per-method, per-compile-job; the index is
@@ -25,10 +20,19 @@
 //   - the v0 stub directory landed in MSG-20260918-004; the
 //     DependencyIndex is the first real resident.
 //
-// STATUS: v0 design — NO IMPLEMENTATION. The API below is the
-// contract surface for the v0 -> v1 transition. Calling any of
-// these functions today is a no-op (returns empty sets); the v0
-// default is `enable_partial_deopt = false` (shadow-only).
+// STATUS: v0.3 — IMPLEMENTED. The inverse map is a real
+// std::unordered_map<DependencyId, std::vector<Entry>>. `record()`
+// stores the association; `invalidate()` returns the dirty set;
+// `retireMethod()` removes all associations for a method; `size()`
+// returns the count. The implementation is deterministic (Rule 124):
+// the dirty set's nodes + regions are sorted by id before return.
+//
+// The v0.3 is NOT yet wired to the inline pass (the inline pass
+// creates ClassHierarchy dependencies via `Graph::addDependency()`
+// but does not call `DependencyIndex::record()` — the wiring is the
+// v0 -> v1 transition's work). Today the DependencyIndex is exercised
+// by unit tests only; the v0 default `enable_partial_deopt = false`
+// short-circuits the engine's guard-failure path.
 
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +47,10 @@ namespace b2::pipeline {
 // The dirty set: nodes + regions whose assumptions have been
 // invalidated, awaiting the dirty-node closure expansion
 // (Section 5) and the region safety checks (Section 6).
+//
+// Invariants (Rule 124: deterministic):
+//   - `nodes` is sorted by NodeId and deduplicated.
+//   - `regions` is sorted by RegionId and deduplicated.
 struct DirtySet {
   std::vector<ir::NodeId> nodes;
   std::vector<ir::RegionId> regions;
@@ -55,14 +63,38 @@ struct DirtySet {
   }
 };
 
+// One association in the inverse map: a node + a region that depend
+// on a DependencyId. The node is the Guard node (or any node carrying
+// SpecMeta.dependency); the region is the recompilation region the
+// node belongs to (ir::kInvalidRegion if region tracking is not yet
+// wired — the v0.3 accepts this and the dirty closure handles it).
+struct DependencyEntry {
+  ir::NodeId node = ir::kInvalidNodeId;
+  ir::RegionId region = ir::kInvalidRegion;
+  ir::MethodId method = 0;  // for retireMethod()
+};
+
 // The runtime DependencyIndex (Section 2 of the contract).
 //
-// The v0 ships shadow-only: the functions are declared but are
-// no-ops. The v0 -> v1 transition implements them; until then,
-// callers (the T2 driver's guard-failure path) check the
-// `enable_partial_deopt` feature flag and short-circuit to the
-// existing T0 deopt path (Section 10 fallback) when the flag is
-// false.
+// The inverse map: DependencyId -> list of (node, region, method)
+// associations. When an assumption breaks (e.g., a new class is
+// loaded that invalidates a ClassHierarchy assumption), the runtime
+// calls `invalidate(dep)`; the index returns the dirty set (all
+// nodes + regions that depend on `dep`). The caller expands the
+// dirty closure (Section 5) and runs the region safety checks
+// (Section 6) before attempting partial rebuild.
+//
+// DETERMINISM (Rule 124): the dirty set's nodes + regions are
+// sorted by id before return. The internal storage order is
+// insertion order (non-deterministic across runs if the inline
+// pass's site order varies), but the RETURNED dirty set is always
+// sorted (the caller's dirty closure algorithm depends on sorted
+// input for its binary-search membership checks).
+//
+// THREAD SAFETY: the v0.3 is NOT thread-safe (single-threaded
+// today; `b2t2` is synchronous). The v0 -> v1 transition adds
+// locking when the multi-threaded compilation base lands
+// (`docs/STATUS.md` item 5).
 class DependencyIndex {
 public:
   DependencyIndex() = default;
@@ -70,18 +102,16 @@ public:
   DependencyIndex(const DependencyIndex&) = delete;
   DependencyIndex& operator=(const DependencyIndex&) = delete;
 
-  // Add a (DependencyId, NodeId, RegionId) association. Called by
-  // the T2 driver when it lowers a Guard node whose FrameState's
-  // SpecMeta carries a non-kInvalidDependency id.
+  // Add a (DependencyId, NodeId, RegionId, MethodId) association.
+  // Called by the T2 driver (in the v0 -> v1 transition) when it
+  // lowers a Guard node whose FrameState's SpecMeta carries a
+  // non-kInvalidDependency id. The MethodId is for `retireMethod()`.
   //
-  // v0: no-op (shadow-only). The v1 records the association in
-  // the inverse map; the v0 default `enable_partial_deopt = false`
-  // means the T2 driver doesn't even call this (the Guard is
-  // lowered without speculation tracking).
+  // Duplicate associations (same dep + node + region) are silently
+  // deduplicated (the caller may call record() multiple times for
+  // the same association; the index keeps one).
   void record(ir::DependencyId dep, ir::NodeId node,
-              ir::RegionId region) {
-    (void)dep; (void)node; (void)region;
-  }
+              ir::RegionId region, ir::MethodId method = 0);
 
   // Mark all nodes/regions dependent on `dep` dirty. Called by
   // the runtime when an assumption breaks (e.g., a new class is
@@ -93,31 +123,39 @@ public:
   // 9) decide whether to attempt partial rebuild or escalate to
   // full deopt.
   //
-  // v0: returns the empty set (shadow-only). The v1 returns the
-  // actual dirty set from the inverse map.
-  [[nodiscard]] DirtySet invalidate(ir::DependencyId dep) {
-    (void)dep;
-    return DirtySet{};
-  }
+  // The returned dirty set is sorted by id (Rule 124) and
+  // deduplicated.
+  [[nodiscard]] DirtySet invalidate(ir::DependencyId dep) const;
 
   // Per-method teardown: the method's compiled code is being
   // retired; all its dependencies are removed from the index.
-  //
-  // v0: no-op. The v1 walks the index and removes all entries
-  // whose RegionId belongs to the method.
-  void retireMethod(ir::MethodId m) {
-    (void)m;
-  }
+  void retireMethod(ir::MethodId m);
 
   // Telemetry: how many (DependencyId, NodeId, RegionId)
   // associations the index holds. Used by the
   // `deopt-to-reopt latency` and `partial_recompile_success_rate`
   // counters (Section 22).
+  [[nodiscard]] std::size_t size() const noexcept;
+
+  // Telemetry: how many distinct DependencyIds the index tracks.
+  // (One DependencyId may have multiple associations — e.g., one
+  // ClassHierarchy dependency may be referenced by multiple Guard
+  // nodes across multiple methods.)
+  [[nodiscard]] std::size_t distinctDependencies() const noexcept;
+
+private:
+  // The inverse map. Stored as a flat vector of (dep, entry) pairs
+  // for deterministic iteration (an unordered_map would be faster
+  // for lookup but non-deterministic for iteration; the v0.3
+  // prioritizes determinism over performance — the v0 -> v1
+  // transition may switch to a sorted vector or a hash map with
+  // deterministic iteration).
   //
-  // v0: returns 0. The v1 returns the actual count.
-  [[nodiscard]] std::size_t size() const noexcept {
-    return 0;
-  }
+  // The vector is kept SORTED by (dep, node, region) for:
+  //   - deterministic invalidate() output (walk in sorted order),
+  //   - O(log n) binary search for duplicate detection in record(),
+  //   - O(n) retireMethod() (walk once, remove matching).
+  std::vector<std::pair<ir::DependencyId, DependencyEntry>> entries_;
 };
 
 } // namespace b2::pipeline

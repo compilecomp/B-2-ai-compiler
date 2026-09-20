@@ -15,6 +15,7 @@
 #   - determinism (Rule 124).
 add_executable(b2_pipeline_tests
   TestMain.cpp
+  DependencyIndexTests.cpp
   DirtyClosureTests.cpp
   RegionSafetyTests.cpp
 )

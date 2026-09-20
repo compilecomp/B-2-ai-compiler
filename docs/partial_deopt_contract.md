@@ -108,7 +108,7 @@ What the IR does NOT have (the v0 work):
 
 ---
 
-## 2. The DependencyIndex (runtime structure, v0 work)
+## 2. The DependencyIndex (runtime structure — v0.3 implemented)
 
 The runtime `DependencyIndex` is the inverse map from
 `DependencyId → set<NodeId>` (and, transitively,
@@ -125,27 +125,59 @@ The runtime `DependencyIndex` is the inverse map from
   `MSG-20260918-004`); the `DependencyIndex` is the first real
   resident of `compiler/pipeline/`.
 
-```text
-// The contract surface (to land in compiler/pipeline/DependencyIndex.h):
+### v0.3 implementation status
 
-class DependencyIndex {
-  // Add a (DependencyId, NodeId, RegionId) association.
-  // Called by the T2 driver when it lowers a Guard node whose
-  // FrameState's SpecMeta carries a non-kInvalidDependency id.
-  void record(ir::DependencyId dep, ir::NodeId node,
-              ir::RegionId region);
+**Status: v0.3 — implemented.** The inverse map is a real
+`std::vector<std::pair<DependencyId, DependencyEntry>>` kept sorted
+by `(dep, node, region)` for:
 
-  // Mark all nodes/regions dependent on `dep` dirty.
-  // Called by the runtime when an assumption breaks (e.g., a new
-  // class is loaded that invalidates a ClassHierarchy assumption).
-  // Returns the dirty set (callers expand to a safe region next).
-  DirtySet invalidate(ir::DependencyId dep);
+- deterministic `invalidate()` output (walk in sorted order;
+  Rule 124),
+- O(log n) binary search for duplicate detection in `record()`,
+- O(n) `retireMethod()` (walk once, remove matching).
 
-  // Per-method teardown (the method's compiled code is being
-  // retired; all its dependencies are removed from the index).
-  void retireMethod(ir::MethodId m);
-};
-```
+The API:
+
+- `record(dep, node, region, method)` — stores the association.
+  Duplicate `(dep, node, region)` calls are deduplicated (the
+  caller may call `record()` multiple times for the same Guard
+  re-lowering; the index keeps one). The `method` field is for
+  `retireMethod()`.
+- `invalidate(dep)` — returns the `DirtySet` (sorted, deduplicated
+  nodes + regions that depend on `dep`). The dirty set feeds into
+  `expandDirtyClosure()` (Section 5) + `checkRegionSafety()`
+  (Section 6).
+- `retireMethod(method)` — removes all associations whose MethodId
+  matches (the method's compiled code is being retired).
+- `size()` — the total association count (telemetry).
+- `distinctDependencies()` — the distinct DependencyId count
+  (telemetry; one dep may have multiple associations).
+
+THREAD SAFETY: the v0.3 is NOT thread-safe (single-threaded today;
+`b2t2` is synchronous). The v0 → v1 transition adds locking when
+the multi-threaded compilation base lands (`docs/STATUS.md` item 5).
+
+The v0.3 is NOT yet wired to the inline pass. The inline pass
+creates `ClassHierarchy` dependencies via `Graph::addDependency()`
+but does NOT call `DependencyIndex::record()` — the wiring is the
+v0 → v1 transition's work (the inline pass needs to also pass the
+DependencyIndex to `record()` when it creates a GuardInline guard).
+Today the DependencyIndex is exercised by unit tests only.
+
+12 unit tests in `tests/pipeline/DependencyIndexTests.cpp` cover:
+empty index, record + invalidate, multiple associations per dep,
+dedup, sorted output, unknown dep, retireMethod, distinct deps
+telemetry, determinism (Rule 124), the speculative-devirtualization
+scenario (a ClassHierarchy dependency fires when a new subclass is
+loaded → invalidate() returns the Guard node + its region), invalid
+dep ignored, no-node-no-region ignored.
+
+The speculative-devirtualization scenario test
+(`pipeline_dependency_index_devirt_scenario`) models the ICDG Phase 2
+path: the inline pass creates a Guard node + a ClassHierarchy
+dependency + a SpecMeta; the DependencyIndex records the association;
+the runtime fires `invalidate()` when the assumption breaks; the
+dirty set feeds into the partial deopt path.
 
 The `DirtySet` is the input to the dirty-node closure algorithm
 (Section 5). The `invalidate(dep)` call is the runtime event

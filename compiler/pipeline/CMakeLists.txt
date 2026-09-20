@@ -17,6 +17,7 @@
 # expandDirtyClosure().
 
 add_library(b2_pipeline STATIC
+  src/DependencyIndex.cpp
   src/DirtyClosure.cpp
   src/RegionSafety.cpp
 )
