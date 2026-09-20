@@ -99,6 +99,69 @@ ordering is wrong, or the materialization is skipped because the
 `ConstantI` is referenced as a value (not as a side-effecting node)
 and the lowering assumes the slot was populated by a previous block.
 
+## Root cause analysis (item 1: conversions.rbc) — 2026-09-20
+
+Deep investigation of the T2 lowering's slot management reveals the
+root cause for item 1 (conversions.rbc). The bug is in the
+`CallVirtual` arg-staging path in `compiler/codegen/src/T2Lowering.cpp`
+(lines 952-970).
+
+**The mechanism:** When a method has multiple `CallVirtual` nodes in
+sequence (e.g., two `println` calls with `i2b`/`i2c` narrowing
+conversions between them), ALL nodes end up in ONE block (the
+sea-of-nodes has no control-flow split between the calls). The block
+emission order is node-ID order (n1, n2, n3, ..., n13, n14, ..., n21).
+The `storeInt` for n14 (I2C) writes 65535 to n14's slot (slot 7,
+payload at rbp+0x110). But the `CallVirtual` (n21) arg-staging
+`copySlot` reads from the WRONG slot — slot 2 (n3 = I2B = 44, payload
+at rbp+0xc0) instead of slot 7 (n14 = I2C = 65535, payload at
+rbp+0x110).
+
+**Why:** The `CallVirtual` arg-staging uses `s.g.input(n, 2+a)` to
+find the arg node, then looks up `s.slotOf[argNode]`. The IR's
+`input(n21, 3)` correctly returns n14 (the I2C node). But the
+`copySlot` code path that stages the arg copies from a different slot
+than `slotOf[n14]` — the slot index computation is off by the number
+of intervening value nodes that were emitted between the two
+CallVirtual nodes.
+
+This is confirmed by disassembling the T2-compiled code: the second
+`CallVirtual`'s `copySlot` loads from `[rbp+0xc0]` (slot 2 = I2B
+result = 44) instead of `[rbp+0x110]` (slot 7 = I2C result = 65535).
+The first `CallVirtual`'s `copySlot` correctly loads from `[rbp+0xc0]`
+(slot 2 = I2B = 44). So the second call reuses the first call's arg
+slot — the arg staging is not re-reading from the I2C node's slot.
+
+**Fix direction (not yet implemented):** The `CallVirtual` arg-staging
+should re-read from `s.slotOf[argNode]` at the point of the call
+(which it claims to do), but the `copySlot` function or the slot
+lookup is returning the wrong slot. The bug is either:
+(a) `slotOf` is being populated incorrectly (the slot assigned to
+n14 doesn't match what `assignSlots` computes), OR
+(b) the `copySlot` call is using a cached/stale slot index from a
+previous `CallVirtual` in the same block.
+
+A minimal test (one `i2c` + one `println`) PASSES — the bug only
+surfaces with TWO+ `CallVirtual` nodes in the same block. This
+confirms the slot-staleness hypothesis.
+
+**Items 2 and 3 likely share the same root cause family:**
+- Item 3 (float_math.rbc): the leading empty line is likely the same
+  bug — the first `println` call's arg slot is reused by a subsequent
+  `println(D)V` call, and the stale slot contains 0 (from a previous
+  `xor eax, eax` type-tag store), which `println` formats as an empty
+  line.
+- Item 2 (fields.rbc): may be a different bug (the runtime's
+  `getfield` helper behavior, not the T2 lowering's slot management),
+  but the same "two calls in one block" pattern is present.
+
+**Fix priority:** Fixing the slot-staleness bug in the `CallVirtual`
+arg-staging would likely fix items 1 AND 3 simultaneously. Item 2
+may also be fixed if the arg-staging fix causes the `getfield` to
+read from the correct (freshly-written) slot. Item 4 (opt-mode
+strings_intern) is likely a different root cause (the SCCP fold
+changes the graph structure, not just the slot contents).
+
 ## Impact
 
 - **codegen**: the T2 lowering has 4 known divergences from T0. The
