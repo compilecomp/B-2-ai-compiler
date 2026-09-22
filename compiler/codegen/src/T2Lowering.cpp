@@ -274,14 +274,8 @@ void storeNull(LowerState& s, ir::NodeId n) {
   s.em.movEaxImm32(static_cast<std::int32_t>(kRTypeNull));
   s.em.storeRbpDisp32(Reg32::EAX, slotTag(it->second));
 }
-void storeRef(LowerState& s, ir::NodeId n) {
-  auto it=s.slotOf.find(n); if(it==s.slotOf.end()) return;
-  s.em.storeRbpDisp32(Reg32::EAX, slotPayload(it->second));
-  s.em.xorEaxEax();
-  s.em.storeRbpDisp32(Reg32::EAX, slotPayload(it->second)+4);
-  s.em.movEaxImm32(static_cast<std::int32_t>(kRTypeRef));
-  s.em.storeRbpDisp32(Reg32::EAX, slotTag(it->second));
-}
+// storeRef removed: was unused (-Werror=unused-function). Re-enable when
+// the T2 lowering handles ref-typed value stores via a dedicated path.
 
 // Copy one slot's 16-byte Value to another (for phi moves).
 void copySlot(LowerState& s, std::uint32_t dstSlot, std::uint32_t srcSlot) {
@@ -380,15 +374,8 @@ bool isBlockLeader(K k) noexcept {
 }
 
 // Find the block leader that controls a given node (its ctrl input's block).
-// For fixed nodes, input[0] is ctrl. For projections (IfTrue etc.), input[0]
-// is the parent If/Switch.
-ir::NodeId ctrlOf(const ir::Graph& g, ir::NodeId n) {
-  if (n >= g.nodeCount()) return ir::kInvalidNodeId;
-  const ir::Node& nd = g.node(n);
-  // If/LoopEnd are control nodes themselves but have a ctrl input too.
-  if (nd.numInputs >= 1) return g.input(n, 0);
-  return ir::kInvalidNodeId;
-}
+// ctrlOf removed: was unused (-Werror=unused-function). Re-enable when the
+// block builder needs explicit ctrl-chain walking (currently handled inline).
 
 // Build blocks + schedule nodes. Returns blocks in RPO (entry first).
 std::vector<Block> buildBlocks(LowerState& s) {
@@ -487,7 +474,8 @@ std::vector<Block> buildBlocks(LowerState& s) {
                 // Predecessor p-1. Find the block leader for this predecessor.
                 // For LoopBegin: pred 0 = entry, pred 1 = backedge (LoopEnd's block).
                 // For Region: pred p = the p-th control predecessor's block.
-                ir::NodeId predCtrl = (p < region) ? g.input(region, p) : ir::kInvalidNodeId;
+                // predCtrl removed: was unused (-Werror=unused-variable); the predecessor
+// block leader is found via predNode below, not via this variable.
                 // Actually, the predecessor's block leader is the control node
                 // that feeds region's input[p]. For a LoopBegin, input[1] is the
                 // backedge control (LoopEnd or IfTrue/IfFalse before LoopEnd).
@@ -669,7 +657,9 @@ std::vector<Block> buildBlocks(LowerState& s) {
 void emitNode(LowerState& s, ir::NodeId n) {
   const ir::Node& nd = s.g.node(n);
   if (nd.isDead()) return;
-  using K = ir::NodeKind;
+  // Note: `using K = ir::NodeKind;` is already declared at the top of the
+  // anonymous namespace (line 34); the inner declaration was removed to
+  // fix -Werror=shadow.
   switch (nd.kind) {
     // === constants ===
     case K::ConstantI: s.em.movEaxImm32(static_cast<std::int32_t>(nd.constValue)); storeInt(s,n); break;
@@ -979,7 +969,8 @@ void emitNode(LowerState& s, ir::NodeId n) {
 // --- emit a block terminator (the control node's branch/return) ---------------
 void emitTerminator(LowerState& s, ir::NodeId n) {
   const ir::Node& nd = s.g.node(n);
-  using K = ir::NodeKind;
+  // Note: `using K = ir::NodeKind;` is already declared at the top of the
+  // anonymous namespace; the inner declaration was removed (-Werror=shadow).
   switch (nd.kind) {
     case K::Start: break; // no terminator
     case K::Region: case K::LoopBegin: break; // fall through to successor
@@ -1130,10 +1121,11 @@ bool lowerGraph(LowerState& s) {
       // The conditional je goes to IfFalse. If IfTrue isn't the next block,
       // emit a JMP to it after the conditional jump.
       // Find which successor is IfTrue (fall-through) and which is IfFalse.
-      ir::NodeId ifTrueSucc = ir::kInvalidNodeId, ifFalseSucc = ir::kInvalidNodeId;
+      ir::NodeId ifTrueSucc = ir::kInvalidNodeId;
       for (ir::NodeId sc : blk.successors) {
         if (sc < s.g.nodeCount() && s.g.node(sc).kind == K::IfTrue) ifTrueSucc = sc;
-        else ifFalseSucc = sc;
+        // ifFalseSucc removed: was set but not used (-Werror=unused-but-set-variable).
+        // The pendingIfFalse entry already handles the je to IfFalse (comment below).
       }
       // The pendingIfFalse entry already handles the je to IfFalse.
       // If IfTrue (fall-through) isn't the next block, emit a JMP to it.

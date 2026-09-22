@@ -19,7 +19,8 @@ concurrency:
 #   CI config` per docs/teams/ownership.yaml. This workflow is the mechanical
 #   realization of that claim for the layers CI can actually check today:
 #   the project builds cleanly with the toolchain pinned in docs/cpp26_standards.md,
-#   ctest is green, and a sanitizer build does not regress.
+#   ctest is green, a sanitizer build does not regress, and -Werror is enforced
+#   (every warning is an error — no silent warning accumulation).
 #
 # What CI does NOT verify (acknowledged honestly in docs/STATUS.md):
 #   - the 150-rule law system itself is not mechanically enforced yet;

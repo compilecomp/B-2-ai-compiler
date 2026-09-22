@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic -Wshadow)
+add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Werror)
 
 option(B2_BUILD_TOOLS "Build command-line tools (b2parse)" ON)
 option(B2_BUILD_TESTS "Build the test suite" ON)
