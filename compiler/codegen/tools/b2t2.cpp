@@ -65,6 +65,7 @@
 #include "b2/passes/GraphBuilder.h"
 #include "b2/passes/Inline.h"
 #include "b2/passes/Passes.h"
+#include "b2/pipeline/DependencyIndex.h"
 #include "b2/rbc/RbcText.h"
 #include "b2/rbc/Verifier.h"
 
@@ -238,6 +239,13 @@ int main(int argc, char** argv) {
     profile = trainAndSnapshot(*parsed, profileStorage);
   }
 
+  // The runtime DependencyIndex (partial deopt v0.3). When the inline pass
+  // creates a GuardInline guard + ClassHierarchy dependency, it calls
+  // depIndex.record() to register the association. The runtime can later
+  // call depIndex.invalidate(dep) when a new subclass is loaded to get
+  // the dirty set for the partial deopt path.
+  b2::pipeline::DependencyIndex depIndex;
+
   // Build the Tier1 engine (provides the helper-call dispatch, W^X activation,
   // and deopt-to-T0 path; the T2 lowering installs code into its cache).
   b2::codegen::Tier1 engine(*parsed, b2::codegen::Tier1Config{});
@@ -263,6 +271,7 @@ int main(int argc, char** argv) {
     if (inl) {
       b2::passes::InlineConfig icfg;
       icfg.profile = profile;
+      icfg.depIndex = &depIndex;
       const b2::passes::InlineResult ir =
           b2::passes::runInlining(g, resolver, icfg);
       if (!ir.ok) {

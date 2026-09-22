@@ -613,6 +613,18 @@ class Inliner {
       sm.rollback = ir::SpecMeta::Rollback::None;
       g_.attachSpecMeta(guardNode, g_.addSpecMeta(sm));
       ++out_.telemetry.guardsEmitted;
+      // Wire the ClassHierarchy dependency to the runtime DependencyIndex
+      // (partial deopt v0.3). The inverse map: dep → (guardNode, region,
+      // method). When a new subclass is loaded (invalidating the
+      // ClassHierarchy assumption), the runtime calls
+      // depIndex->invalidate(dep) to get the dirty set for the partial
+      // deopt path. The region is kInvalidRegion (the region builder is
+      // v0 → v1 open work); the dirty closure + safety checker handle
+      // the kInvalidRegion case.
+      if (cfg_.depIndex != nullptr) {
+        cfg_.depIndex->record(dep, guardNode, ir::kInvalidRegion,
+                              callee.frameMethodId);
+      }
     }
     detail::InlineSiteWiring w;
     w.entryCtrl = entryCtrl;

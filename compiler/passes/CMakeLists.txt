@@ -23,7 +23,7 @@ add_library(b2::passes ALIAS b2_passes)
 target_include_directories(b2_passes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>)
 
-target_link_libraries(b2_passes PUBLIC b2::ir b2::rbc)
+target_link_libraries(b2_passes PUBLIC b2::ir b2::rbc b2::pipeline)
 target_compile_features(b2_passes PUBLIC cxx_std_26)
 
 # b2graph: parse .rbc text -> build -> verify + print per method (the

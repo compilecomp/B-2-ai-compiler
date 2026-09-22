@@ -49,6 +49,7 @@
 
 #include "b2/ir/Graph.h"
 #include "b2/passes/GraphBuilder.h"
+#include "b2/pipeline/DependencyIndex.h"  // for InlineConfig::depIndex
 #include "b2/rbc/Rbc.h"
 
 namespace b2::passes {
@@ -228,6 +229,22 @@ struct InlineConfig {
 
   std::uint32_t guardMinObservations = kGuardInlineMinObservations;
   std::uint32_t guardMinRatioBP = kGuardInlineMinRatioBP;
+
+  // ICDG Phase 2 + partial deopt v0.3: the runtime DependencyIndex. When
+  // non-null, the inline pass calls `depIndex->record(dep, guardNode,
+  // kInvalidRegion, methodId)` for each GuardInline site, registering the
+  // association between the ClassHierarchy dependency and the TypeProfile
+  // guard. The runtime can later call `depIndex->invalidate(dep)` when
+  // the assumption breaks (e.g., a new subclass is loaded) to get the
+  // dirty set for the partial deopt path. Null (default) = the
+  // association is not registered; the GuardInline still works (the guard
+  // catches wrong receivers at runtime and deopts to T0), but the
+  // class-hierarchy-change invalidation path is not wired.
+  //
+  // The DependencyIndex is forward-declared here to avoid pulling the
+  // pipeline header into every passes consumer. The T2 driver (b2t2)
+  // includes both headers and passes a real DependencyIndex.
+  b2::pipeline::DependencyIndex* depIndex = nullptr;
 };
 
 // --- decisions (icdg.md 19: every decision is explainable) -------------------
